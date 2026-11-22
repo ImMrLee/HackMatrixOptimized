@@ -7,7 +7,7 @@ pkgrel=1
 pkgdesc="HackMatrix is a 3D Linux desktop environment (which can also be a game engine)"
 pkgver=r1154.1.stable.r327.gddbd86b
 arch=('x86_64')
-url="https://github.com/collinalexbell/HackMatrix"
+url="https://github.com/ImMrLee/HackMatrixOptimized"
 license=('MIT')
 provides=("hackmatrix")
 conflicts=(
@@ -68,7 +68,7 @@ if [[ -n "$_local_source" ]]; then
   )
 else
   source=(
-    "HackMatrix::git+https://github.com/collinalexbell/HackMatrix.git"
+    "HackMatrix::git+https://github.com/ImMrLee/HackMatrixOptimized.git"
     "HackMatrix.desktop"
     "matrix-script"
   )
