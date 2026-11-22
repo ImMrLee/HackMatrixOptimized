@@ -42,10 +42,13 @@ HackMatrix 使用 `wofi`.
 
 <img src="vids/focus.gif" width="420">
 
-### 关闭窗口
-视角锁定到特定窗口然后按下 `Super+e`
+### 退出锁定
+视角锁定到特定窗口时按下 `Super+e`
 
 <img src="vids/exitWindow.gif" width="420">
+
+### 关闭窗口
+视角锁定到特定窗口然后按下 `Super+q`
 
 ### 快捷键
 
@@ -319,16 +322,6 @@ ASAN_OPTIONS=detect_container_overflow=0 ctest --test-dir build-asan --output-on
 ```
 
 ---
-
-## 如果只想最小改动原 README
-
-至少改这三处，否则会误导人：
-
-1. **Crow 段**：删掉“自动从源码构建”，改成“找不到就关闭，需显式开启下载”。
-2. **依赖列表**：加 `wlroots 0.19`、`pixman`、`libdrm`、`libxkbcommon`；把 `wofi` / `Xwayland` 标为运行时。
-3. **Arch 段**：删掉 protobuf PR 的旧说明，命令里加 `wlroots0.19`。
-
-其余发行版命令可以保留，但建议都补一句“wlroots 必须是 0.19，否则用 submodule”。
 
 ## 运行
 建议在tty环境运行，可执行文件在项目的根目录
