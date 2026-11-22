@@ -5,6 +5,7 @@
 #include <assimp/scene.h>       // For working with the model data
 
 #include <iostream>
+#include <spdlog/spdlog.h>
 
 aiMesh*
 loadFbx(string modelPath)
@@ -21,8 +22,7 @@ loadFbx(string modelPath)
 
   if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE ||
       !scene->mRootNode) {
-    std::cout << "Error loading FBX: " << importer.GetErrorString()
-              << std::endl;
+    spdlog::error("Error loading FBX: {}", importer.GetErrorString());
     return NULL;
   }
 

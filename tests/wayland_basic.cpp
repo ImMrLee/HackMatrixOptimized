@@ -73,6 +73,9 @@ protected:
                                  ec);
     setenv("XDG_RUNTIME_DIR", xdg.c_str(), 1);
     unsetenv("WAYLAND_DISPLAY");
+    // engine.cpp only writes its bootstrap line when this is set; it is the
+    // file the assertions below read.
+    setenv("MATRIX_WLROOTS_OUTPUT", logFile.c_str(), 1);
 
     // Verify launch exists in current dir
     ASSERT_TRUE(fs::exists("./launch")) << "launch script not found";
@@ -80,6 +83,13 @@ protected:
     // Start compositor
     compPid = fork();
     if (compPid == 0) {
+#ifdef MATRIX_TEST_DEFAULT_COMPOSITOR_BIN
+      // Point launch at the binary this test was built against, unless the
+      // caller already chose one explicitly.
+      if (!std::getenv("MATRIX_WLROOTS_BIN")) {
+        setenv("MATRIX_WLROOTS_BIN", MATRIX_TEST_DEFAULT_COMPOSITOR_BIN, 1);
+      }
+#endif
       execl("/bin/bash", "bash", "-lc", "./launch --headless --in-wm", (char*)nullptr);
       std::exit(127);
     }
@@ -114,79 +124,40 @@ TEST_F(WaylandBasicTest, LogsAreWrittenAfterStartup)
   EXPECT_TRUE(wrote) << "Compositor log is empty after startup";
 }
 
-TEST_F(WaylandBasicTest, LogsWaylandDisplaySelection)
+TEST_F(WaylandBasicTest, LogsEngineBootstrapLine)
 {
+  // engine.cpp writes "engine: VOXEL_API_BIND=..." to MATRIX_WLROOTS_OUTPUT when
+  // it initialises. The older "startup: ..." instrumentation these tests used
+  // to assert on has been removed from the engine.
   std::string line;
-  bool found =
-    wait_for_log_line_contains(logFile,
-                               "startup: WAYLAND_DISPLAY chosen=",
-                               &line,
-                               200,
-                               100);
-  EXPECT_TRUE(found) << "Expected WAYLAND_DISPLAY selection log";
+  bool found = wait_for_log_line_contains(
+    logFile, "engine: VOXEL_API_BIND=", &line, 200, 100);
+  EXPECT_TRUE(found) << "Expected engine bootstrap log line";
   if (found) {
-    auto pos = line.find("WAYLAND_DISPLAY chosen=");
+    auto pos = line.find("VOXEL_API_BIND=");
     ASSERT_NE(pos, std::string::npos);
-    std::string value = line.substr(pos + std::string("WAYLAND_DISPLAY chosen=").size());
-    value = rstrip(value);
+    std::string value =
+      rstrip(line.substr(pos + std::string("VOXEL_API_BIND=").size()));
     EXPECT_FALSE(value.empty());
     EXPECT_NE(value, "(null)");
-    EXPECT_TRUE(value.rfind("wayland-", 0) == 0) << "Unexpected WAYLAND_DISPLAY value: "
-                                                 << value;
   }
 }
 
-TEST_F(WaylandBasicTest, LogsXdgRuntimeDirFallback)
+TEST_F(WaylandBasicTest, CompositorStaysAliveAfterStartup)
 {
-  std::string line;
-  bool found =
-    wait_for_log_line_contains(logFile, "startup: XDG_RUNTIME_DIR=", &line, 200, 100);
-  EXPECT_TRUE(found) << "Expected XDG_RUNTIME_DIR log";
-  if (found) {
-    auto pos = line.find("XDG_RUNTIME_DIR=");
-    ASSERT_NE(pos, std::string::npos);
-    std::string value = line.substr(pos + std::string("XDG_RUNTIME_DIR=").size());
-    value = rstrip(value);
-    EXPECT_FALSE(value.empty());
-    EXPECT_NE(value, "(null)");
-    const char* user = std::getenv("USER");
-    std::string expected_prefix = "/tmp/xdg-runtime-";
-    expected_prefix += (user ? user : "user");
-    bool matchesTmp = value == expected_prefix;
-    bool matchesRun = value.find("/run/user/") == 0;
-    EXPECT_TRUE(matchesTmp || matchesRun)
-      << "Unexpected XDG_RUNTIME_DIR value: " << value
-      << " (expected /tmp or /run scoped to user)";
-  }
-}
-
-TEST_F(WaylandBasicTest, LogsBackendDetection)
-{
-  std::string line;
-  bool found =
-    wait_for_log_line_contains(logFile, "startup: backend kind=", &line, 200, 100);
-  EXPECT_TRUE(found) << "Expected backend detection log";
-  if (found) {
-    auto pos = line.find("backend kind=");
-    ASSERT_NE(pos, std::string::npos);
-    std::string value = line.substr(pos + std::string("backend kind=").size());
-    value = rstrip(value);
-    EXPECT_FALSE(value.empty());
-    EXPECT_NE(value, "(null)");
-    auto space = value.find(' ');
-    if (space != std::string::npos) {
-      value = value.substr(0, space);
-    }
-    EXPECT_EQ(value, "headless") << "Unexpected backend kind: " << value;
-  }
+  // A crash-on-startup regression would show up as the child exiting quickly.
+  std::this_thread::sleep_for(std::chrono::seconds(3));
+  ASSERT_GT(compPid, 0);
+  EXPECT_EQ(kill(compPid, 0), 0)
+    << "Compositor exited within a few seconds of startup";
 }
 
 int main(int argc, char** argv)
 {
   // Allow focusing on a single test by default; use --all to run everything or
   // set WAYLAND_TEST_FILTER to override the default filter. Falls back to
-  // WaylandBasicTest.LogsBackendDetection to keep runs short.
-  std::string defaultFilter = "WaylandBasicTest.LogsBackendDetection";
+  // WaylandBasicTest.LogsEngineBootstrapLine to keep runs short.
+  std::string defaultFilter = "WaylandBasicTest.LogsEngineBootstrapLine";
   const char* envFilter = std::getenv("WAYLAND_TEST_FILTER");
   bool runAll = false;
 

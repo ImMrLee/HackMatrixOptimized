@@ -28,14 +28,14 @@ namespace MultiPlayer {
 		{
 			const char* portEnv = std::getenv("MULTIPLAYER_WEBGUI_PORT");
 			if (!portEnv || !*portEnv) {
-				return 7776;
+				return 7775;
 			}
 
 			errno = 0;
 			char* end = nullptr;
 			long parsedPort = std::strtol(portEnv, &end, 10);
 			if (errno != 0 || end == portEnv || *end != '\0' || parsedPort <= 0 || parsedPort > 65535) {
-				return 7776;
+				return 7775;
 			}
 
 			return static_cast<int>(parsedPort);
@@ -45,7 +45,7 @@ namespace MultiPlayer {
 	WebGui::WebGui(Engine* engine)
 		: connect(false)
 		  , address("127.0.0.1")
-		  , port(7775)
+		  , port(readWebGuiPort())
 		  , engine(engine)
 	{
 

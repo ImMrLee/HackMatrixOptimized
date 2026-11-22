@@ -1,0 +1,61 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  arch:
+    name: Arch / ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+    env:
+      # No GPU in CI; force Mesa's software rasteriser for the headless boot test.
+      LIBGL_ALWAYS_SOFTWARE: "1"
+
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel cmake git meson ninja patch \
+            protobuf wayland wayland-protocols gtest \
+            libdrm libxkbcommon pixman mesa libglvnd lcms2 systemd-libs \
+            seatd libdisplay-info libliftoff libinput libxcb \
+            xcb-util-errors xcb-util-wm xcb-util-renderutil \
+            assimp fmt spdlog sqlite zeromq \
+            vulkan-icd-loader vulkan-headers hwdata glslang \
+            libx11 xorg-xwayland
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Configure
+        # wlroots0.19 is not in the official Arch repositories, so CI builds the
+        # vendored submodule. On systems that ship wlroots0.19 the default
+        # (MATRIX_USE_SYSTEM_WLROOTS=ON) is used instead.
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DMATRIX_USE_SYSTEM_WLROOTS=OFF \
+            -DMATRIX_ENABLE_INTEGRATION_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure -R matrix_unit_tests
+
+      - name: Compositor boot smoke test (headless)
+        # Runs the real binary through ./launch --headless and asserts it writes
+        # its bootstrap log line and stays alive. No display or GPU required.
+        run: ctest --test-dir build --output-on-failure -R matrix_wayland_basic

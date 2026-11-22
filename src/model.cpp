@@ -13,6 +13,7 @@
 
 #include "glm/ext/matrix_transform.hpp"
 #include <glm/gtc/quaternion.hpp>
+#include <spdlog/spdlog.h>
 
 using namespace std;
 
@@ -32,7 +33,7 @@ Model::loadModel(string path)
 
   if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE ||
       !scene->mRootNode) {
-    cout << "ERROR::ASSIMP::" << import.GetErrorString() << endl;
+    spdlog::error("ASSIMP: {}", import.GetErrorString());
     return;
   }
   directory = path.substr(0, path.find_last_of('/'));
@@ -93,7 +94,9 @@ Model::processMesh(aiMesh* mesh, const aiScene* scene)
       indices.push_back(face.mIndices[j]);
   }
 
-  if (mesh->mMaterialIndex >= 0) {
+  // mMaterialIndex is unsigned, so the old `>= 0` test was always true and
+  // offered no protection against an out-of-range index.
+  if (mesh->mMaterialIndex < scene->mNumMaterials) {
     aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
     vector<MeshTexture> diffuseMaps =
       loadMaterialTextures(material, aiTextureType_DIFFUSE, "texture_diffuse");
@@ -125,9 +128,9 @@ Model::loadMaterialTextures(aiMaterial* mat,
                             string typeName)
 {
   vector<MeshTexture> textures;
-  cout << "loading material textures" << endl;
+  spdlog::debug("loading material textures");
   for (unsigned int i = 0; i < mat->GetTextureCount(type); i++) {
-    cout << "loading texture " << i << endl;
+    spdlog::debug("loading texture {}", i);
     aiString str;
     mat->GetTexture(type, i, &str);
     bool skip = false;
@@ -199,9 +202,14 @@ TextureFromFile(const char* path, const string& directory, bool gamma)
     stbi_load(filename.c_str(), &width, &height, &nrComponents, 0);
   stbi_set_flip_vertically_on_load(true);
   if (data) {
-    GLenum format;
+    // stbi yields 1..4 components. This used to leave `format` uninitialized
+    // whenever nrComponents was 2 (grayscale+alpha) or an unexpected value,
+    // handing garbage to glTexImage2D.
+    GLenum format = GL_RGBA;
     if (nrComponents == 1)
       format = GL_RED;
+    else if (nrComponents == 2)
+      format = GL_RG;
     else if (nrComponents == 3)
       format = GL_RGB;
     else if (nrComponents == 4)
@@ -227,7 +235,7 @@ TextureFromFile(const char* path, const string& directory, bool gamma)
 
     stbi_image_free(data);
   } else {
-    std::cout << "Texture failed to load at path: " << path << std::endl;
+    spdlog::error("Texture failed to load at path: {}", path);
     stbi_image_free(data);
   }
 

@@ -9,6 +9,7 @@
 #include <sstream>
 #include <thread>
 #include <vector>
+#include <spdlog/spdlog.h>
 
 bool
 isShellScript(const std::string& filename)
@@ -26,7 +27,7 @@ getShPID(char* pidfile)
 {
   const int timeoutSeconds = 5;
   // Open the file for reading
-  std::cout << "opening " << pidfile << std::endl;
+  spdlog::debug("opening {}", pidfile);
   std::ifstream file(pidfile);
   int pid;
 

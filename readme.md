@@ -1,4 +1,4 @@
-# (ARCHIVED) HackMatrix
+# HackMatrix
 https://collinalexbell.itch.io/hackmatrix
 
 

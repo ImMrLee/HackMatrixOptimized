@@ -14,6 +14,7 @@
 #include <SQLiteCpp/Statement.h>
 #include <SQLiteCpp/Exception.h>
 
+#include <cstdint>
 #include <string>
 #include <memory>
 

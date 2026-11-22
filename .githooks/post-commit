@@ -1,5 +1,22 @@
 #!/bin/bash
+# Optional developer convenience: keep a rolling backup of the compositor binary
+# and its voxel/db state. Disabled by default because it has side effects
+# (writes outside the repo) and assumes a personal backup directory exists.
+#
+# Enable explicitly with:  git config hackmatrix.backupDir ~/backup_assets
+# or export HACKMATRIX_BACKUP_DIR=~/backup_assets
 
-cp matrix _matrix
-cp vox/*.vox ~/backup_assets
-cp db/matrix.db ~/backup_assets
+set -u
+
+backup_dir="${HACKMATRIX_BACKUP_DIR:-$(git config --get hackmatrix.backupDir 2>/dev/null || true)}"
+if [ -z "${backup_dir}" ]; then
+  exit 0
+fi
+
+mkdir -p "${backup_dir}" 2>/dev/null || exit 0
+
+[ -f matrix ] && cp matrix "${backup_dir}/_matrix" 2>/dev/null
+[ -d vox ] && cp vox/*.vox "${backup_dir}/" 2>/dev/null
+[ -f db/matrix.db ] && cp db/matrix.db "${backup_dir}/" 2>/dev/null
+
+exit 0

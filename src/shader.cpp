@@ -11,6 +11,7 @@
 namespace fs = std::filesystem;
 
 #include <glm/gtc/type_ptr.hpp>
+#include <spdlog/spdlog.h>
 
 std::string
 retrieveShaderCode(std::string path)
@@ -25,8 +26,8 @@ retrieveShaderCode(std::string path)
     std::string rv = shaderStream.str();
     shaderFile.close();
     return rv;
-  } catch (std::ifstream::failure e) {
-    std::cout << "ERROR::SHADER::FILE_NOT_SUCCESFULLY_READ" << std::endl;
+  } catch (const std::ifstream::failure& e) {
+    spdlog::error("SHADER: file not successfully read: {}", path);
     return "";
   }
 }
@@ -39,9 +40,7 @@ hasCompileErrors(unsigned int shaderId, std::string shaderName)
   glGetShaderiv(shaderId, GL_COMPILE_STATUS, &success);
   if (!success) {
     glGetShaderInfoLog(shaderId, 512, NULL, infoLog);
-    std::cout << "ERROR::SHADER::" << shaderName
-              << "::COMPILATION_FAILED (" << shaderId << ")\n"
-              << infoLog << std::endl;
+    spdlog::error("SHADER {}: compilation failed ({}): {}", shaderName, shaderId, infoLog);
     return true;
   };
   return false;
@@ -82,8 +81,7 @@ hasLinkingErrors(unsigned int shaderId)
   glGetProgramiv(shaderId, GL_LINK_STATUS, &success);
   if (!success) {
     glGetProgramInfoLog(shaderId, 2048, NULL, infoLog);
-    std::cout << "ERROR::SHADER::PROGRAM::LINKING_FAILED (" << shaderId << ")\n"
-              << infoLog << std::endl;
+    spdlog::error("SHADER program: linking failed ({}): {}", shaderId, infoLog);
     return true;
   }
   return false;
@@ -107,6 +105,7 @@ Shader::linkShaderProgram()
       glDeleteProgram(ID);
     }
     ID = newID;
+    uniformLocations.clear();
   }
 }
 
@@ -169,7 +168,7 @@ Shader::createShaders()
   auto fragmentSuccess = createAndCompileShader(GL_FRAGMENT_SHADER, fragmentCode);
   std::optional<bool> geometrySuccess = std::nullopt;
   if (geometryCode.has_value()) {
-    std::cout << "creating geometry shader" << std::endl;
+    spdlog::debug("creating geometry shader");
     geometrySuccess = createAndCompileShader(GL_GEOMETRY_SHADER, geometryCode.value());
   }
   if(vertexSuccess && fragmentSuccess && (!geometrySuccess.has_value() || geometrySuccess)) {
@@ -201,7 +200,7 @@ Shader::loadCode(std::string vertexPath,
   }
   if (vertexCode == "" || fragmentCode == "" ||
       (geometryPath.has_value() && geometryCode.value() == "")) {
-    std::cout << "ERROR::SHADER::FAILED_TO_INITIALIZE" << std::endl;
+    spdlog::error("SHADER: failed to initialize");
     return;
   }
 }
@@ -265,6 +264,13 @@ bool Shader::sourceCodeChanged() {
 void
 Shader::reloadIfChanged()
 {
+  // At most a few checks per second instead of one per frame.
+  const auto now = std::chrono::steady_clock::now();
+  if (lastHotReloadCheck.time_since_epoch().count() != 0 &&
+      now - lastHotReloadCheck < std::chrono::milliseconds(500)) {
+    return;
+  }
+  lastHotReloadCheck = now;
 
   if(sourceCodeChanged()) {
     // source code changed, so lets cashe the time
@@ -308,6 +314,18 @@ Shader::restoreUniforms() const
   glUseProgram(previousProgram);
 }
 
+GLint
+Shader::uniformLocation(const std::string& name) const
+{
+  auto it = uniformLocations.find(name);
+  if (it != uniformLocations.end()) {
+    return it->second;
+  }
+  const GLint location = glGetUniformLocation(ID, name.c_str());
+  uniformLocations.emplace(name, location);
+  return location;
+}
+
 void
 Shader::use()
 {
@@ -318,19 +336,19 @@ void
 Shader::setBool(const std::string& name, bool value)
 {
   boolUniforms[name] = value;
-  glUniform1i(glGetUniformLocation(ID, name.c_str()), (int)value);
+  glUniform1i(uniformLocation(name), (int)value);
 }
 void
 Shader::setInt(const std::string& name, int value)
 {
   intUniforms[name] = value;
-  glUniform1i(glGetUniformLocation(ID, name.c_str()), value);
+  glUniform1i(uniformLocation(name), value);
 }
 void
 Shader::setFloat(const std::string& name, float value)
 {
   floatUniforms[name] = value;
-  glUniform1f(glGetUniformLocation(ID, name.c_str()), value);
+  glUniform1f(uniformLocation(name), value);
 }
 
 void
@@ -338,7 +356,7 @@ Shader::setMatrix4(const std::string& name, const glm::mat4& value)
 {
   mat4Uniforms[name] = value;
   glUniformMatrix4fv(
-    glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, &value[0][0]);
+    uniformLocation(name), 1, GL_FALSE, &value[0][0]);
 }
 
 void
@@ -346,12 +364,12 @@ Shader::setMatrix3(const std::string& name, const glm::mat3& value)
 {
   mat3Uniforms[name] = value;
   glUniformMatrix3fv(
-    glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, &value[0][0]);
+    uniformLocation(name), 1, GL_FALSE, &value[0][0]);
 }
 
 void
 Shader::setVec3(const std::string& name, const glm::vec3& value)
 {
   vec3Uniforms[name] = value;
-  glUniform3fv(glGetUniformLocation(ID, name.c_str()), 1, &value[0]);
+  glUniform3fv(uniformLocation(name), 1, &value[0]);
 }

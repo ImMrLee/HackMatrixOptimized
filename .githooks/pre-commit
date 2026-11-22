@@ -1,4 +1,16 @@
 #!/bin/bash
+# Refresh the line-count report before committing, but never block the commit
+# when cloc or the Makefile target is unavailable.
 
-make cloc
-git add line-count
+set -u
+
+if command -v cloc >/dev/null 2>&1; then
+  if [ -f Makefile ] && grep -q '^cloc:' Makefile; then
+    make cloc
+  else
+    cloc --quiet src include tests tools client_libs > line-count 2>/dev/null || true
+  fi
+  git add line-count 2>/dev/null || true
+fi
+
+exit 0

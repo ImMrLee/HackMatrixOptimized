@@ -40,6 +40,9 @@ process_key_sym(WlrServer* server,
 
   auto controls = server->engine->getControls();
 
+  // Feed the ImGui debug overlay (text input) before WM/seat handling.
+  server->engine->updateImGuiKey(sym, pressed);
+
   uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
 
   bool modifierHeld = (mods & server->hotkeyModifierMask);

@@ -151,16 +151,6 @@ struct HoveredSurfaceInfo
   double sy = 0.0;
 };
 
-static WaylandApp*
-wayland_app_for_entity(WlrServer* server, entt::entity entity)
-{
-  if (!server || !server->registry || !isValidWaylandAppComponent(server, entity)) {
-    return nullptr;
-  }
-  auto& comp = server->registry->get<WaylandApp::Component>(entity);
-  return comp.app.get();
-}
-
 static std::optional<std::pair<double, double>>
 project_pointer_to_surface(WlrServer* server, wlr_surface* surface)
 {
@@ -193,19 +183,6 @@ project_pointer_to_surface(WlrServer* server, wlr_surface* surface)
   }
   return std::make_pair(static_cast<double>(hit->surfacePixels.x),
                         static_cast<double>(hit->surfacePixels.y));
-}
-
-static WaylandApp*
-wayland_app_for_surface(WlrServer* server, wlr_surface* surface)
-{
-  if (!server || !surface) {
-    return nullptr;
-  }
-  auto it = server->surface_map.find(surface);
-  if (it == server->surface_map.end()) {
-    return nullptr;
-  }
-  return wayland_app_for_entity(server, it->second);
 }
 
 static std::optional<HoveredSurfaceInfo>
@@ -503,6 +480,12 @@ handle_pointer_motion(wl_listener* listener, void* data)
     handle->server->pointer_x = handle->server->cursor->x;
     handle->server->pointer_y = handle->server->cursor->y;
   }
+  if (handle->server->engine) {
+    handle->server->engine->updateImGuiPointer(
+      handle->server->pointer_x,
+      handle->server->pointer_y,
+      handle->server->input.mouse_buttons);
+  }
   bool focusRequested = wayland_pointer_focus_requested(handle->server);
   if (hover_focus_enabled(handle->server)) {
     if (auto hovered = pick_hovered_surface(handle->server)) {
@@ -567,6 +550,12 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
     handle->server->pointer_x = handle->server->cursor->x;
     handle->server->pointer_y = handle->server->cursor->y;
   }
+  if (handle->server->engine) {
+    handle->server->engine->updateImGuiPointer(
+      handle->server->pointer_x,
+      handle->server->pointer_y,
+      handle->server->input.mouse_buttons);
+  }
   bool focusRequested = wayland_pointer_focus_requested(handle->server);
   if (hover_focus_enabled(handle->server)) {
     if (auto hovered = pick_hovered_surface(handle->server)) {
@@ -601,17 +590,23 @@ handle_pointer_axis(wl_listener* listener, void* data)
   auto* handle =
     wl_container_of(listener, static_cast<WlrPointerHandle*>(nullptr), axis);
   auto* event = static_cast<wlr_pointer_axis_event*>(data);
-  wlr_surface* preferred_surface = nullptr;
-  if (handle->server && handle->server->seat &&
-      handle->server->seat->pointer_state.focused_surface) {
-    preferred_surface = handle->server->seat->pointer_state.focused_surface;
-  }
-  if (!preferred_surface) {
-    auto picked = _pick_any_surface(handle->server);
-    preferred_surface = picked.first;
-  }
-  ensure_pointer_focus(handle->server, event->time_msec, preferred_surface);
+
+  wlr_surface* target = nullptr;
   if (handle->server && handle->server->seat) {
+    target = handle->server->seat->pointer_state.focused_surface;
+  }
+
+  // Only deliver scroll to a surface that actually has pointer focus. The old
+  // code fell back to an arbitrary surface, so scrolling in WM mode (no focused
+  // app) was handled by an unfocused window and left it in an undefined state
+  // (readme.md # Bugs). Hover focus sets pointer focus on motion, so scrolling
+  // over a window still works.
+  if (!target) {
+    return;
+  }
+
+  ensure_pointer_focus(handle->server, event->time_msec, target);
+  if (handle->server->seat) {
     wlr_seat_pointer_notify_axis(handle->server->seat,
                                  event->time_msec,
                                  event->orientation,
@@ -629,6 +624,29 @@ void handle_pointer_button(wl_listener* listener, void* data)
     wl_container_of(listener, static_cast<WlrPointerHandle*>(nullptr), button);
   auto* event = static_cast<wlr_pointer_button_event*>(data);
   bool button_consumed_by_controls = false;
+  // Feed the ImGui overlay first. When it owns the mouse, swallow the click so
+  // it does not also reach game controls or a focused client.
+  bool imgui_captured = false;
+  if (handle->server && handle->server->engine) {
+    Engine* engine = handle->server->engine.get();
+    int slot = -1;
+    if (event->button == BTN_LEFT) {
+      slot = 0;
+    } else if (event->button == BTN_RIGHT) {
+      slot = 1;
+    } else if (event->button == BTN_MIDDLE) {
+      slot = 2;
+    }
+    if (slot >= 0) {
+      handle->server->input.mouse_buttons[slot] =
+        static_cast<uint32_t>(event->state) ==
+        static_cast<uint32_t>(WLR_BUTTON_PRESSED);
+    }
+    engine->updateImGuiPointer(handle->server->pointer_x,
+                               handle->server->pointer_y,
+                               handle->server->input.mouse_buttons);
+    imgui_captured = engine->imguiWantsMouse();
+  }
   bool wayland_focus_requested =
     wayland_pointer_focus_requested(handle->server);
   wlr_surface* pointer_surface = nullptr;
@@ -644,11 +662,11 @@ void handle_pointer_button(wl_listener* listener, void* data)
       handle->server && handle->server->engine) {
     // If a Wayland client has (or is requesting) focus, bypass game controls so
     // the click reaches the client immediately.
-    if (controls && !wayland_focus_requested) {
+    if (controls && !wayland_focus_requested && !imgui_captured) {
       button_consumed_by_controls = controls->handlePointerButton(event->button, true);
     }
   }
-  if (handle->server->seat && !button_consumed_by_controls) {
+  if (handle->server->seat && !button_consumed_by_controls && !imgui_captured) {
     if (!preferred_surface && hover_focus_enabled(handle->server)) {
       if (auto hovered = pick_hovered_surface(handle->server)) {
         if (handle->server->engine) {

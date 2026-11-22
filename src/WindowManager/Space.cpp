@@ -78,6 +78,7 @@ Space::removeApp(entt::entity entity)
   if (surface) {
     renderer->deregisterApp(surface);
   }
+  appRaycastCache.erase(entity);
   // registry->destroy(entity);
 }
 
@@ -345,8 +346,21 @@ Space::raycastApp(const Ray& ray, float distLimit)
 
     const float halfWidth = kAppQuadHalfWidth;
     const float halfHeight = appQuadHalfHeight();
-    glm::mat4 localToWorld = positionable.modelMatrix * app->getHeightScalar();
-    glm::mat4 worldToLocal = glm::inverse(localToWorld);
+
+    const glm::mat4 heightScalar = app->getHeightScalar();
+    auto& cache = appRaycastCache[entity];
+    // Compare the actual inputs rather than relying on `damaged`: other systems
+    // (e.g. systems::Update) call update() and clear the flag every frame.
+    if (!cache.valid || cache.modelMatrix != positionable.modelMatrix ||
+        cache.heightScalar != heightScalar) {
+      cache.localToWorld = positionable.modelMatrix * heightScalar;
+      cache.worldToLocal = glm::inverse(cache.localToWorld);
+      cache.modelMatrix = positionable.modelMatrix;
+      cache.heightScalar = heightScalar;
+      cache.valid = true;
+    }
+    const glm::mat4& localToWorld = cache.localToWorld;
+    const glm::mat4& worldToLocal = cache.worldToLocal;
     glm::vec3 localOrigin =
       glm::vec3(worldToLocal * glm::vec4(ray.origin, 1.0f));
     glm::vec3 localDirection =

@@ -109,8 +109,15 @@ start_compositor()
   setenv("VOXEL_API_ADDR_FOR_TEST", apiAddr.c_str(), 1);
   namespace fs = std::filesystem;
   std::string bin = "./matrix-debug";
+#ifdef MATRIX_TEST_DEFAULT_COMPOSITOR_BIN
+  bin = MATRIX_TEST_DEFAULT_COMPOSITOR_BIN;
+#else
   if (!fs::exists(bin)) {
     bin = "./matrix";
+  }
+#endif
+  if (const char* binEnv = std::getenv("MATRIX_WLROOTS_BIN")) {
+    bin = binEnv;
   }
   std::string cmd = "MATRIX_WLROOTS_BIN=" + bin +
                     " MATRIX_WLROOTS_OUTPUT=" + std::string(logPath) +

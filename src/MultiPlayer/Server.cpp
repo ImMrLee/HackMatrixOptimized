@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <unistd.h>
+#include <spdlog/spdlog.h>
 
 namespace MultiPlayer {
 
@@ -11,7 +12,7 @@ Server::Server()
   , isRunning(false)
 {
   if (enet_initialize() != 0) {
-    std::cout << "Failed to initialize enet." << std::endl;
+    spdlog::error("MultiPlayer: failed to initialize enet (server)");
   }
 }
 

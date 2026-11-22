@@ -1,4 +1,5 @@
 #include "world.h"
+#include "voxel_raycast.h"
 #include "chunk.h"
 #include "components/BoundingSphere.h"
 #include "coreStructs.h"
@@ -861,85 +862,30 @@ World::getVoxelSize() const
 Position
 World::raycastVoxelSpace(float size)
 {
-  Position rv;
-  rv.valid = false;
+  Position rv{ 0, 0, 0, false, glm::vec3(0.0f) };
   if (renderer == NULL) {
     return rv;
   }
   glm::vec3 voxelSpace = cameraToVoxelSpace(camera->position);
-  int x = (int)floor(voxelSpace.x);
-  int y = (int)floor(voxelSpace.y);
-  int z = (int)floor(voxelSpace.z);
 
-  int stepX = (camera->front.x > 0) ? 1 : -1;
-  int stepY = (camera->front.y > 0) ? 1 : -1;
-  int stepZ = (camera->front.z > 0) ? 1 : -1;
+  VoxelRaycastHit hit = ddaVoxelRaycast(
+    voxelSpace,
+    camera->front,
+    20.0f,
+    256,
+    false,
+    [&](int x, int y, int z) {
+      glm::vec3 worldPos = glm::vec3(x, y, z) * size;
+      return renderer->voxelExistsAt(worldPos, size);
+    });
 
-  float tilNextX = x + ((stepX == 1) ? 1 : 0) - (voxelSpace.x);
-  float tilNextY = y + ((stepY == 1) ? 1 : 0) - (voxelSpace.y);
-  float tilNextZ = z + ((stepZ == 1) ? 1 : 0) - (voxelSpace.z);
-
-  float tMaxX = camera->front.x != 0 ? tilNextX / camera->front.x
-                                     : std::numeric_limits<float>::infinity();
-
-  float tMaxY = camera->front.y != 0 ? tilNextY / camera->front.y
-                                     : std::numeric_limits<float>::infinity();
-
-  float tMaxZ = camera->front.z != 0 ? tilNextZ / camera->front.z
-                                     : std::numeric_limits<float>::infinity();
-
-  float tDeltaX = camera->front.x != 0 ? 1 / abs(camera->front.x)
-                                       : std::numeric_limits<float>::infinity();
-
-  float tDeltaY = camera->front.y != 0 ? 1 / abs(camera->front.y)
-                                       : std::numeric_limits<float>::infinity();
-
-  float tDeltaZ = camera->front.z != 0 ? 1 / abs(camera->front.z)
-                                       : std::numeric_limits<float>::infinity();
-
-  glm::vec3 normal(0);
-  glm::vec3 normalX = glm::vec3(stepX * -1, 0, 0);
-  glm::vec3 normalY = glm::vec3(0, stepY * -1, 0);
-  glm::vec3 normalZ = glm::vec3(0, 0, stepZ * -1);
-
-  int delta = 1;
-  int limit = 20;
-  int steps = 0;
-  while ((tMaxX < limit || tMaxY < limit || tMaxZ < limit) && steps < 256) {
-    if (tMaxX < tMaxY) {
-      if (tMaxX < tMaxZ) {
-        tMaxX = tMaxX + tDeltaX;
-        x = x + stepX;
-        normal = normalX;
-      } else {
-        tMaxZ = tMaxZ + tDeltaZ;
-        z = z + stepZ;
-        normal = normalZ;
-      }
-    } else {
-      if (tMaxY < tMaxZ) {
-        tMaxY = tMaxY + tDeltaY;
-        y = y + stepY;
-        normal = normalY;
-      } else {
-        tMaxZ = tMaxZ + tDeltaZ;
-        z = z + stepZ;
-        normal = normalZ;
-      }
-    }
-
-    glm::vec3 worldPos = glm::vec3(x, y, z) * size;
-    if (renderer->voxelExistsAt(worldPos, size)) {
-      rv.x = x;
-      rv.y = y;
-      rv.z = z;
-      rv.normal = normal;
-      rv.valid = true;
-      return rv;
-    }
-    steps += delta;
+  if (hit.valid) {
+    rv.x = hit.x;
+    rv.y = hit.y;
+    rv.z = hit.z;
+    rv.normal = hit.normal;
+    rv.valid = true;
   }
-
   return rv;
 }
 
@@ -955,84 +901,24 @@ World::cameraToVoxelSpace(glm::vec3 cameraPosition)
 Position
 World::getLookedAtCube()
 {
-  Position rv;
-  rv.valid = false;
+  Position rv{ 0, 0, 0, false, glm::vec3(0.0f) };
   glm::vec3 voxelSpace = cameraToVoxelSpace(camera->position);
 
-  int x = (int)floor(voxelSpace.x);
-  int y = (int)floor(voxelSpace.y);
-  int z = (int)floor(voxelSpace.z);
+  VoxelRaycastHit hit = ddaVoxelRaycast(
+    voxelSpace,
+    camera->front,
+    20.0f,
+    0,
+    true,
+    [&](int x, int y, int z) { return getCube(x, y, z) != NULL; });
 
-  int stepX = (camera->front.x > 0) ? 1 : -1;
-  int stepY = (camera->front.y > 0) ? 1 : -1;
-  int stepZ = (camera->front.z > 0) ? 1 : -1;
-
-  // index<> already represents boundary if step<> is negative
-  // otherwise add 1
-  float tilNextX = x + ((stepX == 1) ? 1 : 0) -
-                   (voxelSpace.x); // voxelSpace, because float position
-  float tilNextY = y + ((stepY == 1) ? 1 : 0) - (voxelSpace.y);
-  float tilNextZ = z + ((stepZ == 1) ? 1 : 0) - (voxelSpace.z);
-  // what happens if x is negative though...
-
-  float tMaxX = camera->front.x != 0 ? tilNextX / camera->front.x
-                                     : std::numeric_limits<float>::infinity();
-
-  float tMaxY = camera->front.y != 0 ? tilNextY / camera->front.y
-                                     : std::numeric_limits<float>::infinity();
-
-  float tMaxZ = camera->front.z != 0 ? tilNextZ / camera->front.z
-                                     : std::numeric_limits<float>::infinity();
-
-  float tDeltaX = camera->front.x != 0 ? 1 / abs(camera->front.x)
-                                       : std::numeric_limits<float>::infinity();
-
-  float tDeltaY = camera->front.y != 0 ? 1 / abs(camera->front.y)
-                                       : std::numeric_limits<float>::infinity();
-
-  float tDeltaZ = camera->front.z != 0 ? 1 / abs(camera->front.z)
-                                       : std::numeric_limits<float>::infinity();
-
-  int delta = 1;
-  int limit = 20;
-
-  glm::vec3 normal;
-  glm::vec3 normalX = glm::vec3(stepX * -1, 0, 0);
-  glm::vec3 normalY = glm::vec3(0, stepY * -1, 0);
-  glm::vec3 normalZ = glm::vec3(0, 0, stepZ * -1);
-  do {
-    if (tMaxX < tMaxY) {
-      if (tMaxX < tMaxZ) {
-        tMaxX = tMaxX + tDeltaX;
-        x = x + stepX;
-        normal = normalX;
-      } else {
-        tMaxZ = tMaxZ + tDeltaZ;
-        z = z + stepZ;
-        normal = normalZ;
-      }
-    } else {
-      if (tMaxY < tMaxZ) {
-        tMaxY = tMaxY + tDeltaY;
-        y = y + stepY;
-        normal = normalY;
-      } else {
-        tMaxZ = tMaxZ + tDeltaZ;
-        z = z + stepZ;
-        normal = normalZ;
-      }
-    }
-    auto closest = getCube(x, y, z);
-    if (closest != NULL) {
-      rv.x = x;
-      rv.y = y;
-      rv.z = z;
-      rv.normal = normal;
-      rv.valid = true;
-      return rv;
-    }
-  } while (tMaxX < limit || tMaxY < limit || tMaxZ < limit);
-
+  if (hit.valid) {
+    rv.x = hit.x;
+    rv.y = hit.y;
+    rv.z = hit.z;
+    rv.normal = hit.normal;
+    rv.valid = true;
+  }
   return rv;
 }
 

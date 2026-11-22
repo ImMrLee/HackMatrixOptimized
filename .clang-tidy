@@ -1,0 +1,36 @@
+---
+# Conservative clang-tidy baseline for HackMatrix.
+#
+# The codebase predates modern C++ guidance, so this starts with correctness and
+# performance checks only. Style-modernization checks are added selectively to
+# avoid drowning real findings in a 40k-line rewrite.
+#
+# Run (needs a configured build dir for compile_commands.json):
+#   cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+#   clang-tidy -p build src/*.cpp
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-reserved-identifier,
+  -bugprone-exception-escape,
+  performance-*,
+  -performance-inefficient-vector-operation,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-emplace,
+  modernize-make-shared,
+  modernize-make-unique,
+  readability-container-size-empty,
+  readability-redundant-smartptr-get,
+  readability-uniqueptr-delete-release
+
+WarningsAsErrors: ''
+
+HeaderFilterRegex: '(^|/)(include|src)/'
+
+ExcludeHeaderFilterRegex: '(^|/)(include/(imgui|stb|enet|fakeit|glad|glm|cereal)|tracy|wlroots)/'
+
+FormatStyle: file
+...

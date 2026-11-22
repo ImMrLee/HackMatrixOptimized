@@ -61,44 +61,6 @@ matches_configured_or_fallback_key(ControlMappings& controlMappings,
   return sym == fallbackLower || sym == fallbackUpper;
 }
 
-bool
-matches_key_binding(ControlMappings& controlMappings,
-                    xkb_keysym_t sym,
-                    const KeyBinding& binding)
-{
-  if (binding.fn != nullptr) {
-    return matches_configured_or_fallback_key(controlMappings,
-                                              sym,
-                                              binding.fn,
-                                              binding.fallbackLower,
-                                              binding.fallbackUpper);
-  }
-  return sym == binding.fallbackLower || sym == binding.fallbackUpper;
-}
-
-template<size_t N>
-bool
-matches_any_key_binding(ControlMappings& controlMappings,
-                        xkb_keysym_t sym,
-                        const std::array<KeyBinding, N>& bindings)
-{
-  for (const auto& binding : bindings) {
-    if (matches_key_binding(controlMappings, sym, binding)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-ControlResponse
-key_not_handled_by_wm()
-{
-  ControlResponse resp;
-  resp.handledByWM = false;
-  resp.shouldExit = false;
-  return resp;
-}
-
 ControlResponse
 key_handled_by_wm()
 {
@@ -117,25 +79,6 @@ quit_key_handled_by_wm()
   return resp;
 }
 
-
-bool
-is_shifted_digit_sym(xkb_keysym_t sym)
-{
-  switch (sym) {
-    case XKB_KEY_exclam:
-    case XKB_KEY_at:
-    case XKB_KEY_numbersign:
-    case XKB_KEY_dollar:
-    case XKB_KEY_percent:
-    case XKB_KEY_asciicircum:
-    case XKB_KEY_ampersand:
-    case XKB_KEY_asterisk:
-    case XKB_KEY_parenleft:
-      return true;
-    default:
-      return false;
-  }
-}
 
 bool
 is_super_keysym(xkb_keysym_t sym)
@@ -241,6 +184,8 @@ void Controls::handleKeys() {
   if (appFocused) {
     handleUnfocusApp();
     handleCloseFocusedApp();
+    handleMoveFocusedApp();
+    handleResizeFocusedApp();
     return;
   }
 
@@ -611,6 +556,28 @@ Controls::handlePointerButton(uint32_t button, bool pressed)
 }
 
 void Controls::pollPressedKeys() {
+  // Dispatch due synthetic keys first. handleKeySym() locks keysymMutex, so it
+  // must run outside the lock we hold while draining the queue.
+  std::vector<ScheduledKeyEvent> due;
+  {
+    std::lock_guard<std::mutex> lock(keysymMutex);
+    const double now = nowSeconds();
+    for (auto it = scheduledKeyEvents.begin(); it != scheduledKeyEvents.end();) {
+      if (it->whenSeconds <= now) {
+        due.push_back(*it);
+        it = scheduledKeyEvents.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  for (const auto& scheduled : due) {
+    handleKeySym(scheduled.sym,
+                 scheduled.pressed,
+                 scheduled.modifierHeld,
+                 scheduled.shiftHeld);
+  }
+
   std::lock_guard<std::mutex> lock(keysymMutex);
   KeysymEvent keysymEvent;
   while(keysymQueue.size() > 0) {
@@ -627,6 +594,17 @@ void Controls::pollPressedKeys() {
     }
     keysymQueue.pop();
   }
+}
+
+void Controls::scheduleKeySym(xkb_keysym_t sym,
+                              bool pressed,
+                              bool modifierHeld,
+                              bool shiftHeld,
+                              double delaySeconds)
+{
+  std::lock_guard<std::mutex> lock(keysymMutex);
+  scheduledKeyEvents.push_back(ScheduledKeyEvent{
+    nowSeconds() + delaySeconds, sym, pressed, modifierHeld, shiftHeld });
 }
 
 
@@ -746,6 +724,7 @@ Controls::resetWaylandInputState()
 {
   std::lock_guard<std::mutex> lock(keysymMutex);
   pressed.clear();
+  scheduledKeyEvents.clear();
   while (!keysymQueue.empty()) {
     keysymQueue.pop();
   }
@@ -858,6 +837,71 @@ Controls::handleCloseFocusedApp()
     }
   }
   wm->unfocusApp();
+  return true;
+}
+
+bool
+Controls::handleMoveFocusedApp()
+{
+  if (!waylandModifierHeld || !wm || !camera) {
+    return false;
+  }
+
+  glm::vec3 direction(0.0f);
+  if (pressed.count(XKB_KEY_Left) > 0) {
+    direction.x -= 1.0f;
+  }
+  if (pressed.count(XKB_KEY_Right) > 0) {
+    direction.x += 1.0f;
+  }
+  if (pressed.count(XKB_KEY_Up) > 0) {
+    direction.y += 1.0f;
+  }
+  if (pressed.count(XKB_KEY_Down) > 0) {
+    direction.y -= 1.0f;
+  }
+  if (direction == glm::vec3(0.0f)) {
+    return false;
+  }
+  if (!debounce(lastKeyPressTime)) {
+    return true;
+  }
+
+  // Move in the camera's screen plane so the arrows feel directional.
+  constexpr float kStep = 0.1f;
+  glm::vec3 front = glm::normalize(camera->front);
+  glm::vec3 right = glm::cross(front, glm::vec3(0.0f, 1.0f, 0.0f));
+  if (glm::length(right) < 1e-4f) {
+    right = glm::vec3(1.0f, 0.0f, 0.0f);
+  }
+  right = glm::normalize(right);
+  const glm::vec3 up = glm::normalize(glm::cross(right, front));
+  wm->moveFocusedApp((right * direction.x + up * direction.y) * kStep);
+  return true;
+}
+
+bool
+Controls::handleResizeFocusedApp()
+{
+  if (!waylandModifierHeld || !wm) {
+    return false;
+  }
+
+  float factor = 1.0f;
+  if (pressed.count(XKB_KEY_bracketright) > 0 ||
+      pressed.count(XKB_KEY_equal) > 0) {
+    factor = 1.05f;
+  } else if (pressed.count(XKB_KEY_bracketleft) > 0 ||
+             pressed.count(XKB_KEY_minus) > 0) {
+    factor = 0.95f;
+  }
+  if (factor == 1.0f) {
+    return false;
+  }
+  if (!debounce(lastKeyPressTime)) {
+    return true;
+  }
+  wm->resizeFocusedApp(factor);
   return true;
 }
 

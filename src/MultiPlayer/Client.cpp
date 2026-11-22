@@ -5,6 +5,7 @@
 #include <type_traits>
 #include "systems/Player.h"
 #include "time_utils.h"
+#include <spdlog/spdlog.h>
 
 namespace MultiPlayer {
 
@@ -14,7 +15,7 @@ Client::Client(shared_ptr<EntityRegistry> registry)
   , peer(nullptr)
 {
   if (enet_initialize() != 0) {
-    std::cout << "Failed to initialize enet." << std::endl;
+    spdlog::error("MultiPlayer: failed to initialize enet");
   }
 }
 
@@ -37,7 +38,7 @@ Client::connect(const std::string& address, int port)
   }
   client = enet_host_create(NULL, 1, 10, 0, 0);
   if (client == NULL) {
-    std::cout << "Failed to create client." << std::endl;
+    spdlog::error("MultiPlayer: failed to create client");
     return false;
   }
 
@@ -47,7 +48,7 @@ Client::connect(const std::string& address, int port)
 
   peer = enet_host_connect(client, &enetAddress, 10, 0);
   if (peer == NULL) {
-    std::cout << "Failed to connect to server." << std::endl;
+    spdlog::error("MultiPlayer: failed to connect to server");
     enet_host_destroy(client);
     client = nullptr;
     return false;
@@ -56,12 +57,12 @@ Client::connect(const std::string& address, int port)
   ENetEvent event;
   if (enet_host_service(client, &event, 5000) > 0 &&
       event.type == ENET_EVENT_TYPE_CONNECT) {
-    std::cout << "Connected to server." << std::endl;
+    spdlog::info("MultiPlayer: connected to server");
     enet_host_flush(client);
     _isConnected = true;
     return true;
   } else {
-    std::cout << "didn't get response" << std::endl;
+    spdlog::warn("MultiPlayer: no response from server");
     enet_peer_reset(peer);
     peer = nullptr;
     enet_host_destroy(client);
@@ -132,7 +133,7 @@ Client::disconnect()
           enet_packet_destroy(event.packet);
           break;
         case ENET_EVENT_TYPE_DISCONNECT:
-          std::cout << "Disconnected from server." << std::endl;
+          spdlog::info("MultiPlayer: disconnected from server");
           _isConnected = false;
           break;
       }

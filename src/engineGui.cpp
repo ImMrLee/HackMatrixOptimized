@@ -19,6 +19,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <cstdlib>
 #include "entity.h"
 #include "systems/Boot.h"
 #include "systems/Door.h"
@@ -53,6 +54,10 @@ EngineGui::EngineGui(Engine* engine,
   io.DisplaySize = ImVec2(SCREEN_WIDTH, SCREEN_HEIGHT);
   io.BackendPlatformName = "hackmatrix-wlroots";
   io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
+
+  if (const char* flip = std::getenv("HACKMATRIX_IMGUI_FLIP")) {
+    imguiFlipY = std::atoi(flip) != 0;
+  }
 }
 
 void
@@ -71,6 +76,9 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
   }
   ImGui_ImplOpenGL3_NewFrame();
   ImGuiIO& io = ImGui::GetIO();
+  // The GL backend does not know the framebuffer size; keep it in sync so the
+  // overlay tracks output resizes.
+  io.DisplaySize = ImVec2(SCREEN_WIDTH, SCREEN_HEIGHT);
   if (io.DeltaTime <= 0.0f) {
     io.DeltaTime = 1.0f / 60.0f;
   }
@@ -86,6 +94,8 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
     if (fps > 0)
       fps = 1.0 / fps;
   }
+  ImGui::SetNextWindowSize(ImVec2(520, 560), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_FirstUseEver);
   ImGui::Begin("HackMatrix");
   vector<string> debugMessages = loggerVector->fetch();
   if (ImGui::BeginTabBar("Developer Menu")) {
@@ -119,6 +129,31 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
   ImGui::End();
   engine->setImguiWantsMouse(ImGui::GetIO().WantCaptureMouse);
   ImGui::Render();
+
+  ImDrawData* drawData = ImGui::GetDrawData();
+  if (drawData) {
+    if (imguiFlipY) {
+      // Mirror vertices and clip rects so the overlay is not upside down in the
+      // wlroots output FBO. Disable with HACKMATRIX_IMGUI_FLIP=0.
+      const float fbHeight =
+        drawData->DisplaySize.y * drawData->FramebufferScale.y;
+      for (int n = 0; n < drawData->CmdListsCount; ++n) {
+        ImDrawList* cmdList = drawData->CmdLists[n];
+        for (int v = 0; v < cmdList->VtxBuffer.Size; ++v) {
+          cmdList->VtxBuffer[v].pos.y = fbHeight - cmdList->VtxBuffer[v].pos.y;
+        }
+        for (int c = 0; c < cmdList->CmdBuffer.Size; ++c) {
+          ImDrawCmd& cmd = cmdList->CmdBuffer[c];
+          const float y0 = cmd.ClipRect.y;
+          const float y1 = cmd.ClipRect.w;
+          cmd.ClipRect.y = fbHeight - y1;
+          cmd.ClipRect.w = fbHeight - y0;
+        }
+      }
+    }
+    ImGui_ImplOpenGL3_RenderDrawData(drawData);
+  }
+
   // Restore GL bindings to minimize GL_INVALID_* spam on GLES2 drivers.
   glUseProgram(prevProgram);
   glBindBuffer(GL_ARRAY_BUFFER, prevArray);

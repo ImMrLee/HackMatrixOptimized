@@ -18,6 +18,9 @@ class EngineGui
   shared_ptr<EntityRegistry> registry;
   shared_ptr<LoggerVector> loggerVector;
   bool imguiGlInitialized = false;
+  // wlroots presents the output FBO top-down; ImGui draws for the opposite
+  // orientation. Override with HACKMATRIX_IMGUI_FLIP=0 if it renders correctly.
+  bool imguiFlipY = true;
   void addComponentPanel(entt::entity, bool&);
   void renderComponentPanel(entt::entity);
   void renderEntities();

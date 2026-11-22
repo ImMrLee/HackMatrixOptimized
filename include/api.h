@@ -32,6 +32,9 @@ protected:
 public:
   CommandServer(Api* api, std::string bindAddress, zmq::context_t& context);
   virtual void poll() = 0;
+  // Deleted through a CommandServer* in Api::~Api(); without this the
+  // ProtobufCommandServer destructor is never run (undefined behaviour).
+  virtual ~CommandServer() = default;
 };
 
 struct ApiCube
@@ -131,6 +134,24 @@ protected:
   queue<BatchedRequest>* getBatchedRequests();
   void releaseBatched();
   void processBatchedRequest(BatchedRequest);
+  // One handler per MessageType (see processBatchedRequest's dispatch table).
+  void handleMove(const BatchedRequest&);
+  void handleTurnKey(const BatchedRequest&);
+  void handlePlayerMove(const BatchedRequest&);
+  void handleUnfocusWindow(const BatchedRequest&);
+  void handleAddVoxels(const BatchedRequest&);
+  void handleClearVoxels(const BatchedRequest&);
+  void handleConfirmAction(const BatchedRequest&);
+  void handleQuit(const BatchedRequest&);
+  void handlePointerReplay(const BatchedRequest&);
+  void handleKeyReplay(const BatchedRequest&);
+  void handleCreateEntity(const BatchedRequest&);
+  void handleDeleteEntity(const BatchedRequest&);
+  void handleListEntities(const BatchedRequest&);
+  void handleGetComponent(const BatchedRequest&);
+  void handleAddComponent(const BatchedRequest&);
+  void handleDeleteComponent(const BatchedRequest&);
+  void handleEditComponent(const BatchedRequest&);
   void updateCachedStatus();
 
 public:

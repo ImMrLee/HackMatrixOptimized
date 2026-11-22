@@ -107,6 +107,9 @@ public:
   int findAppsHotKey(entt::entity theApp);
   void releaseHotkeySlot(entt::entity theApp);
   void unfocusApp();
+  // Move/resize the currently focused app (world space / pixel size).
+  void moveFocusedApp(glm::vec3 delta);
+  void resizeFocusedApp(float factor);
   void menu();
   void launchTerminal();
   void createAndRegisterApps(char** envp);

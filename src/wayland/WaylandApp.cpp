@@ -337,37 +337,23 @@ WaylandApp::update_height_scalar()
 }
 
 void
-WaylandApp::appTexture()
+WaylandApp::destroyImportedImage()
 {
-  if (!pending_buffer.has_value() || textureId < 0 ) {
-    return;
-  }
-
-  wlr_buffer* buffer = pending_buffer.value();
-  if (!buffer) {
-    return;
-  }
   ensureEglImageFns();
-
-  auto destroyImportedImage = [&]() {
-    ensureEglImageFns();
-    if (importedImage != EGL_NO_IMAGE_KHR && gEglDestroyImageKHR) {
-      gEglDestroyImageKHR(eglGetCurrentDisplay(), importedImage);
-      importedImage = EGL_NO_IMAGE_KHR;
-    }
-    if (importedBufferLocked && importedBuffer) {
-      wlr_buffer_unlock(importedBuffer);
-    }
-    importedBufferLocked = false;
-    importedBuffer = nullptr;
-  };
-
-  // Skip work if we've already imported this buffer and nothing new was
-  // committed.
-  if (!needsImport && buffer == importedBuffer) {
-    return;
+  if (importedImage != EGL_NO_IMAGE_KHR && gEglDestroyImageKHR) {
+    gEglDestroyImageKHR(eglGetCurrentDisplay(), importedImage);
+    importedImage = EGL_NO_IMAGE_KHR;
   }
+  if (importedBufferLocked && importedBuffer) {
+    wlr_buffer_unlock(importedBuffer);
+  }
+  importedBufferLocked = false;
+  importedBuffer = nullptr;
+}
 
+bool
+WaylandApp::tryImportDmabuf(wlr_buffer* buffer)
+{
   // Try zero-copy: import the client's dmabuf into a persistent EGLImage and
   // bind it to the app's texture. Once imported, the client can update the
   // buffer contents without us re-uploading.
@@ -467,7 +453,7 @@ WaylandApp::appTexture()
           uploadedWidth = width;
           uploadedHeight = height;
           needsImport = false;
-          return;
+          return true;
         }
         if (gEglDestroyImageKHR) {
           gEglDestroyImageKHR(eglDisplay, image);
@@ -476,7 +462,12 @@ WaylandApp::appTexture()
     }
   }
   }
+  return false;
+}
 
+void
+WaylandApp::uploadCpuFallback(wlr_buffer* buffer)
+{
   // Slow fallback: CPU read + GL upload for non-dmabuf buffers.
   destroyImportedImage();
   size_t stride = 0;
@@ -844,4 +835,30 @@ WaylandApp::appTexture()
   if (beganDataPtrAccess) {
     wlr_buffer_end_data_ptr_access(buffer);
   }
+}
+
+void
+WaylandApp::appTexture()
+{
+  if (!pending_buffer.has_value() || textureId < 0 ) {
+    return;
+  }
+
+  wlr_buffer* buffer = pending_buffer.value();
+  if (!buffer) {
+    return;
+  }
+  ensureEglImageFns();
+
+  // Skip work if we've already imported this buffer and nothing new was
+  // committed.
+  if (!needsImport && buffer == importedBuffer) {
+    return;
+  }
+
+  if (tryImportDmabuf(buffer)) {
+    return;
+  }
+
+  uploadCpuFallback(buffer);
 }

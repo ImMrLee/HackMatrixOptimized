@@ -64,19 +64,15 @@ class Renderer
   GlBuffer DYNAMIC_OBJECT_POSITIONS;
   GlBuffer DYNAMIC_OBJECT_COLORS;
 
-  GlVertexArray VOXEL_SELECTIONS;
-  GlBuffer VOXEL_SELECTION_POSITIONS;
-  GlBuffer VOXEL_SELECTION_TEX_COORDS;
-
   bool isWireframe = false;
 
-  Shader* shader;
-  Shader* cameraShader;
-  Shader* appShader;
-  Shader* depthShader;
-  Shader* cursorShader;
+  // Non-owning alias for whichever shader is currently active.
+  Shader* shader = nullptr;
+  std::unique_ptr<Shader> cameraShader;
+  std::unique_ptr<Shader> depthShader;
+  std::unique_ptr<Shader> cursorShader;
   bool invertY = false;
-  std::map<string, Texture*> textures;
+  std::map<string, std::unique_ptr<Texture>> textures;
   glm::mat4 trans;
   glm::mat4 view;
   glm::mat4 orthographicMatrix;
@@ -98,7 +94,6 @@ class Renderer
   void renderChunkMesh();
   void renderApps();
   void renderLines();
-  void renderLookedAtFace();
   void renderDynamicObjects();
   void renderModels(RenderPerspective);
   void renderVoxels();

@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <chrono>
 #include "glad/glad.h"
 #include <glm/glm.hpp>
 #include <filesystem>
@@ -32,6 +33,11 @@ class Shader
   std::unordered_map<std::string, glm::mat4> mat4Uniforms;
   std::unordered_map<std::string, glm::mat3> mat3Uniforms;
 
+  // Cached glGetUniformLocation results (including -1 for names that do not
+  // exist, which glUniform* ignores). Cleared whenever the program is relinked.
+  mutable std::unordered_map<std::string, GLint> uniformLocations;
+  GLint uniformLocation(const std::string& name) const;
+
   std::string vertexCode;
   std::string fragmentCode;
   std::optional<std::string> geometryCode;
@@ -39,6 +45,10 @@ class Shader
   fs::file_time_type lastVertexChange;
   fs::file_time_type lastFragmentChange;
   fs::file_time_type lastGeometryChange;
+
+  // Hot-reload is a development aid; stat'ing the shader files every frame is
+  // wasteful, so throttle the check per Shader instance.
+  std::chrono::steady_clock::time_point lastHotReloadCheck{};
 
   std::string vertexPath;
   std::string fragmentPath;

@@ -6,6 +6,7 @@
 #pragma GCC diagnostic pop
 
 #include "engine.h"
+#include "imgui_keymap.h"
 #include "components/Bootable.h"
 #include "components/Key.h"
 #include "components/Lock.h"
@@ -25,10 +26,13 @@
 #include "systems/Door.h"
 #include "tracy/Tracy.hpp"
 #include "tracy/TracyOpenGL.hpp"
+#ifdef MATRIX_ENABLE_WEBGUI
 #include "MultiPlayer/WebGui.h"
+#endif
 
 #include <memory>
 #include <spdlog/common.h>
+#include <spdlog/spdlog.h>
 #include <cstdlib>
 #include <chrono>
 #include <fstream>
@@ -102,6 +106,11 @@ shared_ptr<LoggerVector> Engine::setupLogger() {
   loggerSink = make_shared<LoggerSink>(fileSink, imGuiSink);
   logger = make_shared<spdlog::logger>("engine", loggerSink);
   logger->set_level(spdlog::level::debug);
+  // Flush on every message so file logs survive a crash/forced kill.
+  logger->flush_on(spdlog::level::debug);
+  // Modules without their own logger use spdlog::info/error, which go through
+  // this default logger and therefore the same file + ImGui sinks.
+  spdlog::set_default_logger(logger);
   return loggerVector;
 }
 
@@ -119,6 +128,12 @@ Engine::Engine(char** envp, EngineOptions options)
   auto loggerVector = setupLogger();
   initializeMemberObjs();
 
+  // The ImGui debug overlay needs a current GL context. In the wlroots path the
+  // Engine is constructed from the output render callback, so one is available.
+  if (options.enableGui) {
+    engineGui = std::make_shared<EngineGui>(this, registry, loggerVector);
+  }
+
   TracyGpuContext;
 
   wire();
@@ -129,15 +144,12 @@ Engine::Engine(char** envp, EngineOptions options)
 
 Engine::~Engine()
 {
-  // may want to remove this because it might be slow on shutdown
-  // when trying to get fast dev time
-  if (controls) {
-    delete controls;
-  }
-  delete renderer;
-  delete world;
-  delete camera;
-  //delete api;
+  // The API poll thread references world/renderer/controls, so stop it first.
+  api.reset();
+  controls.reset();
+  renderer.reset();
+  world.reset();
+  camera.reset();
   registry->saveAll();
 }
 
@@ -163,31 +175,43 @@ Engine::initializeMemberObjs()
   auto texturePack = blocks::initializeBasicPack();
   auto typedKeyOverlay = std::make_shared<TypedKeyOverlay>();
   wm = make_shared<WindowManager::WindowManager>(registry, loggerSink, envp);
-  camera = new Camera();
+  camera = std::make_unique<Camera>();
+#ifdef MATRIX_ENABLE_WEBGUI
   webGui = std::make_unique<MultiPlayer::WebGui>(this);
-  world = new World(
-    registry, camera, texturePack, true, loggerSink);
-  renderer = new Renderer(
-    registry, camera, world, typedKeyOverlay, texturePack, options.invertYAxis);
+#endif
+  world = std::make_unique<World>(
+    registry, camera.get(), texturePack, true, loggerSink);
+  renderer = std::make_unique<Renderer>(registry,
+                                       camera.get(),
+                                       world.get(),
+                                       typedKeyOverlay,
+                                       texturePack,
+                                       options.invertYAxis);
   camera->setInvertY(options.invertYAxis);
   if (options.enableControls) {
-    controls = new Controls(
-      wm, world, camera, renderer, typedKeyOverlay, registry, texturePack);
+    controls = std::make_unique<Controls>(wm,
+                                          world.get(),
+                                          camera.get(),
+                                          renderer.get(),
+                                          typedKeyOverlay,
+                                          registry,
+                                          texturePack);
   } else {
     controls = nullptr;
   }
-  api = new Api(apiAddress, registry, controls, renderer, world, wm);
+  api = std::make_unique<Api>(
+    apiAddress, registry, controls.get(), renderer.get(), world.get(), wm);
   if (wm) {
-    wm->registerControls(controls);
+    wm->registerControls(controls.get());
   }
 }
 
 void
 Engine::wire()
 {
-  world->attachRenderer(renderer);
+  world->attachRenderer(renderer.get());
   if (wm) {
-    wm->wire(wm, camera, renderer);
+    wm->wire(wm, camera.get(), renderer.get());
   }
 }
 
@@ -211,28 +235,36 @@ Engine::frame()
   api->mutateEntities();
   controls->pollPressedKeys();
   renderer->render();
+  if (engineGui) {
+    engineGui->render(fps, frameIndex, frameTimes);
+  }
   world->tick();
+  if (engineGui) {
+    disableKeysIfImguiActive();
+  }
   controls->poll();
   multiplayerClientIteration(frameStart);
 
-  // Save state ImGui might clobber on GLES2 (primitive restart/poly mode).
-  GLint prevProgram = 0;
-  GLint prevArray = 0;
-  GLint prevTexture = 0;
-  glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
-  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArray);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexture);
-
-
-
-
-  if (engineGui) {
+  // Debug aid for headless verification: capture a screenshot on frame N or
+  // after a wall-clock delay (useful when a client connects later).
+  if (wm) {
+    if (const char* shotEnv = std::getenv("HACKMATRIX_SCREENSHOT_FRAME")) {
+      static const long shotFrame = std::atol(shotEnv);
+      static long frameCount = 0;
+      if (frameCount++ == shotFrame) {
+        wm->requestScreenshot();
+      }
+    }
+    if (const char* msEnv = std::getenv("HACKMATRIX_SCREENSHOT_AFTER_MS")) {
+      static const long afterMs = std::atol(msEnv);
+      static const double firstFrameTime = currentTimeSeconds();
+      static bool taken = false;
+      if (!taken && (currentTimeSeconds() - firstFrameTime) * 1000.0 >= afterMs) {
+        taken = true;
+        wm->requestScreenshot();
+      }
+    }
   }
-
-  // Restore to avoid GL_INVALID_ENUM/OPERATION spam on GLES2 drivers.
-  //glUseProgram(prevProgram);
-  //glBindBuffer(GL_ARRAY_BUFFER, prevArray);
-  //glBindTexture(GL_TEXTURE_2D, prevTexture);
 
   TracyGpuCollect;
   FrameMark;
@@ -272,6 +304,26 @@ Engine::updateImGuiPointer(float xPixels, float yPixels, const bool buttons[3])
   io.MouseDown[1] = buttons[1];
   io.MouseDown[2] = buttons[2];
   setImguiWantsMouse(io.WantCaptureMouse);
+}
+
+
+void
+Engine::updateImGuiKey(xkb_keysym_t sym, bool pressed)
+{
+  if (!engineGui) {
+    return;
+  }
+  ImGuiIO& io = ImGui::GetIO();
+  const ImGuiKey key = keysymToImGuiKey(sym);
+  if (key != ImGuiKey_None) {
+    io.AddKeyEvent(key, pressed);
+  }
+  if (pressed) {
+    const uint32_t codepoint = xkb_keysym_to_utf32(sym);
+    if (codepoint > 0) {
+      io.AddInputCharacter(codepoint);
+    }
+  }
 }
 
 void

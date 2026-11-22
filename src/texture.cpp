@@ -6,6 +6,7 @@
 #include <glad/glad.h>
 #include <iostream>
 #include <cstdlib>
+#include <spdlog/spdlog.h>
 
 using namespace std;
 
@@ -103,7 +104,7 @@ Texture::loadTextureData(std::string fname)
                  data);
     glGenerateMipmap(GL_TEXTURE_2D);
   } else {
-    std::cout << "Failed to load texture" << std::endl;
+    spdlog::error("texture: failed to load");
   }
   stbi_image_free(data);
 }
@@ -112,7 +113,7 @@ void
 Texture::loadTextureArrayData(vector<string> fnames)
 {
   if (fnames.size() == 0) {
-    cout << "no data" << endl;
+    spdlog::error("texture: no data");
     return;
   }
   unsigned char* buffer =
@@ -123,7 +124,7 @@ Texture::loadTextureArrayData(vector<string> fnames)
   for (int i = 0; i < fnames.size(); i++) {
     buffer = stbi_load(fnames[i].c_str(), &width, &height, &nrChannels, 4);
     if (!buffer) {
-      cout << "couldn't load image" << endl;
+      spdlog::error("texture: couldn't load image");
     }
     glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
                     0,

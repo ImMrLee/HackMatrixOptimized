@@ -5,6 +5,7 @@
 #include "systems/Intersections.h"
 #include "texture.h"
 #include "renderer.h"
+#include "renderer_internal.h"
 #include "shader.h"
 #include "AppSurface.h"
 #include "TypedKeyOverlay.h"
@@ -15,6 +16,8 @@
 #include "time_utils.h"
 #include <iostream>
 #include <vector>
+#include <array>
+#include <string>
 #include <algorithm>
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -85,215 +88,28 @@ is_gles()
 }
 #define DISABLE_CULLING true
 
-float HEIGHT = SCREEN_HEIGHT / SCREEN_WIDTH / 2.0;
-float MAX_LIGHTS = 5;
+constexpr int MAX_LIGHTS = 5;
 
-float appVertices[] = {
-  -0.5f, -HEIGHT, 0, 0.0f, 0.0f, 0.5f,  -HEIGHT, 0, 1.0f, 0.0f,
-  0.5f,  HEIGHT,  0, 1.0f, 1.0f, 0.5f,  HEIGHT,  0, 1.0f, 1.0f,
-  -0.5f, HEIGHT,  0, 0.0f, 1.0f, -0.5f, -HEIGHT, 0, 0.0f, 0.0f,
-};
-
-float directRenderQuad[] = {
-  -1, -1, 0, 0, 0, 1,  -1, 0, 1, 0, 1,  1,  0, 1, 1,
-  1,  1,  0, 1, 1, -1, 1,  0, 0, 1, -1, -1, 0, 0, 0
-};
-
-void
-Renderer::genMeshResources()
+namespace {
+template<size_t N>
+std::array<std::string, N>
+makeIndexedUniformNames(const char* prefix)
 {
-  MESH_VERTEX.create();
-  MESH_VERTEX_POSITIONS.create(GL_ARRAY_BUFFER);
-  MESH_VERTEX_TEX_COORDS.create(GL_ARRAY_BUFFER);
-  MESH_VERTEX_BLOCK_TYPES.create(GL_ARRAY_BUFFER);
-  MESH_VERTEX_SELECTS.create(GL_ARRAY_BUFFER);
+  std::array<std::string, N> names;
+  for (size_t i = 0; i < N; ++i) {
+    names[i] = std::string(prefix) + "[" + std::to_string(i) + "]";
+  }
+  return names;
 }
 
-void
-Renderer::genDynamicObjectResources()
-{
-  DYNAMIC_OBJECT_VERTEX.create();
-  DYNAMIC_OBJECT_POSITIONS.create(GL_ARRAY_BUFFER);
-  DYNAMIC_OBJECT_COLORS.create(GL_ARRAY_BUFFER);
-};
-
-void
-Renderer::genGlResources()
-{
-  APP_VAO.create();
-  APP_VBO.create(GL_ARRAY_BUFFER);
-
-  DIRECT_RENDER_VAO.create();
-  DIRECT_RENDER_VBO.create(GL_ARRAY_BUFFER);
-
-  CURSOR_VAO.create();
-  CURSOR_VBO.create(GL_ARRAY_BUFFER);
-
-  LINE_VAO.create();
-  LINE_VBO.create(GL_ARRAY_BUFFER);
-  LINE_INSTANCE.create(GL_ARRAY_BUFFER);
-
-  VOXEL_SELECTIONS.create();
-  VOXEL_SELECTION_POSITIONS.create(GL_ARRAY_BUFFER);
-  VOXEL_SELECTION_TEX_COORDS.create(GL_ARRAY_BUFFER);
-
-  genMeshResources();
-  genDynamicObjectResources();
-}
-
-void
-Renderer::setupMeshVertexAttributePoiners()
-{
-  glBindVertexArray(MESH_VERTEX);
-  glBindBuffer(GL_ARRAY_BUFFER, MESH_VERTEX_POSITIONS);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-
-  glBindBuffer(GL_ARRAY_BUFFER, MESH_VERTEX_TEX_COORDS);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(1);
-
-  glBindBuffer(GL_ARRAY_BUFFER, MESH_VERTEX_SELECTS);
-  glVertexAttribIPointer(2, 1, GL_INT, sizeof(int), (void*)0);
-  glEnableVertexAttribArray(2);
-
-  glBindBuffer(GL_ARRAY_BUFFER, MESH_VERTEX_BLOCK_TYPES);
-  glVertexAttribIPointer(3, 1, GL_INT, sizeof(int), (void*)0);
-  glEnableVertexAttribArray(3);
-}
-
-void
-Renderer::setupDynamicObjectVertexAttributePointers()
-{
-  glBindVertexArray(DYNAMIC_OBJECT_VERTEX);
-  glBindBuffer(GL_ARRAY_BUFFER, DYNAMIC_OBJECT_POSITIONS);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-
-  glBindBuffer(GL_ARRAY_BUFFER, DYNAMIC_OBJECT_COLORS);
-  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(1);
-}
-
-void
-Renderer::setupVertexAttributePointers()
-{
-  setupMeshVertexAttributePoiners();
-  setupDynamicObjectVertexAttributePointers();
-
-  glBindVertexArray(APP_VAO);
-  glBindBuffer(GL_ARRAY_BUFFER, APP_VBO);
-  // position attribute
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-
-  // texture coord attribute
-  glVertexAttribPointer(
-    1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-  glEnableVertexAttribArray(1);
-
-  // direct render
-  glBindVertexArray(DIRECT_RENDER_VAO);
-  glBindBuffer(GL_ARRAY_BUFFER, DIRECT_RENDER_VBO);
-  // position attribute
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-
-  // texture coord attribute
-  glVertexAttribPointer(
-    1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-  glEnableVertexAttribArray(1);
-
-  // line
-  glBindVertexArray(LINE_VAO);
-  glBindBuffer(GL_ARRAY_BUFFER, LINE_VBO);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-  glBindBuffer(GL_ARRAY_BUFFER, LINE_INSTANCE);
-  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(1);
-
-  glBindVertexArray(VOXEL_SELECTIONS);
-  glBindBuffer(GL_ARRAY_BUFFER, VOXEL_SELECTION_POSITIONS);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-
-  glBindBuffer(GL_ARRAY_BUFFER, VOXEL_SELECTION_TEX_COORDS);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(1);
-
-  // software cursor quad (screen-space)
-  glBindVertexArray(CURSOR_VAO);
-  glBindBuffer(GL_ARRAY_BUFFER, CURSOR_VBO);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(
-    1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-  glEnableVertexAttribArray(1);
-}
-
-int MAX_CUBES = 1000000;
-
-void
-Renderer::fillDynamicObjectBuffers()
-{
-  int CUBES = 1000000;
-  int VERTS = CUBES * 36;
-  glBindBuffer(GL_ARRAY_BUFFER, DYNAMIC_OBJECT_POSITIONS);
-  glBufferData(
-    GL_ARRAY_BUFFER, (sizeof(glm::vec3) * VERTS), (void*)0, GL_DYNAMIC_DRAW);
-
-  glBindBuffer(GL_ARRAY_BUFFER, DYNAMIC_OBJECT_COLORS);
-  glBufferData(
-               GL_ARRAY_BUFFER, (sizeof(glm::vec3) * VERTS), (void*)0, GL_DYNAMIC_DRAW);
-}
-
-void
-Renderer::fillBuffers()
-{
-  glBindBuffer(GL_ARRAY_BUFFER, APP_VBO);
-  glBufferData(
-    GL_ARRAY_BUFFER, sizeof(appVertices), appVertices, GL_STATIC_DRAW);
-
-  glBindBuffer(GL_ARRAY_BUFFER, DIRECT_RENDER_VBO);
-  glBufferData(GL_ARRAY_BUFFER,
-               sizeof(directRenderQuad),
-               directRenderQuad,
-               GL_STATIC_DRAW);
-
-  glBindBuffer(GL_ARRAY_BUFFER, LINE_VBO);
-  glBufferData(
-    GL_ARRAY_BUFFER, (sizeof(glm::vec3) * 200000), (void*)0, GL_STATIC_DRAW);
-  glBindBuffer(GL_ARRAY_BUFFER, LINE_INSTANCE);
-  glBufferData(
-    GL_ARRAY_BUFFER, (sizeof(glm::vec3) * 200000), (void*)0, GL_STATIC_DRAW);
-
-  glBindBuffer(GL_ARRAY_BUFFER, MESH_VERTEX_POSITIONS);
-  glBufferData(GL_ARRAY_BUFFER,
-               (sizeof(glm::vec3) * 36 * MAX_CUBES),
-               (void*)0,
-               GL_DYNAMIC_DRAW);
-  glBindBuffer(GL_ARRAY_BUFFER, MESH_VERTEX_TEX_COORDS);
-  glBufferData(GL_ARRAY_BUFFER,
-               (sizeof(glm::vec2) * 36 * MAX_CUBES),
-               (void*)0,
-               GL_DYNAMIC_DRAW);
-  glBindBuffer(GL_ARRAY_BUFFER, MESH_VERTEX_BLOCK_TYPES);
-  glBufferData(
-    GL_ARRAY_BUFFER, (sizeof(int) * 36 * MAX_CUBES), (void*)0, GL_DYNAMIC_DRAW);
-  glBindBuffer(GL_ARRAY_BUFFER, MESH_VERTEX_SELECTS);
-  glBufferData(
-    GL_ARRAY_BUFFER, (sizeof(int) * 36 * MAX_CUBES), (void*)0, GL_DYNAMIC_DRAW);
-
-  glBindBuffer(GL_ARRAY_BUFFER, VOXEL_SELECTION_POSITIONS);
-  glBufferData(
-    GL_ARRAY_BUFFER, (sizeof(glm::vec3) * 6), (void*)0, GL_DYNAMIC_DRAW);
-  glBindBuffer(GL_ARRAY_BUFFER, VOXEL_SELECTION_TEX_COORDS);
-  glBufferData(
-    GL_ARRAY_BUFFER, (sizeof(glm::vec2) * 6), (void*)0, GL_DYNAMIC_DRAW);
-
-  fillDynamicObjectBuffers();
-}
+// Pre-built uniform names: lightUniforms() runs every frame, so building these
+// with std::to_string + concatenation per call was hot-path churn.
+const auto kLightPositionNames = makeIndexedUniformNames<MAX_LIGHTS>("lightPos");
+const auto kLightColorNames = makeIndexedUniformNames<MAX_LIGHTS>("lightColor");
+const auto kFarPlaneNames = makeIndexedUniformNames<MAX_LIGHTS>("far_plane");
+const auto kShadowMatrixNames = makeIndexedUniformNames<6>("shadowMatrices");
+const auto kDepthCubeMapNames = makeIndexedUniformNames<MAX_LIGHTS>("depthCubeMap");
+} // namespace
 
 void
 Renderer::toggleWireframe()
@@ -377,19 +193,18 @@ Renderer::Renderer(shared_ptr<EntityRegistry> registry,
   setupVertexAttributePointers();
 
   std::vector<std::string> images = texturePack->imageNames();
-  textures.insert(
-    std::pair<string, Texture*>("allBlocks", new Texture(images, GL_TEXTURE0)));
-  cameraShader = new Shader("shaders/vertex.glsl", "shaders/fragment.glsl");
+  textures.emplace("allBlocks", std::make_unique<Texture>(images, GL_TEXTURE0));
+  cameraShader = std::make_unique<Shader>("shaders/vertex.glsl", "shaders/fragment.glsl");
   shadowsEnabled = gl_version_at_least(3, 2);
   if (!shadowsEnabled) {
     logger->warn("Disabling shadows: GL version too low for geometry shader");
   } else {
-    depthShader = new Shader("shaders/depthVertex.glsl",
-                             "shaders/depthGeometry.glsl",
-                             "shaders/depthFragment.glsl");
+    depthShader = std::make_unique<Shader>("shaders/depthVertex.glsl",
+                                            "shaders/depthGeometry.glsl",
+                                            "shaders/depthFragment.glsl");
   }
 
-  shader = cameraShader;
+  shader = cameraShader.get();
 
   shader->use(); // may need to move into loop to use changing uniforms
 
@@ -399,7 +214,7 @@ Renderer::Renderer(shared_ptr<EntityRegistry> registry,
   shader->setInt("totalBlockTypes", images.size());
   shader->setBool("SHADOWS_ENABLED", shadowsEnabled);
 
-  cursorShader = new Shader("shaders/cursor.vert", "shaders/cursor.frag");
+  cursorShader = std::make_unique<Shader>("shaders/cursor.vert", "shaders/cursor.frag");
 
   shader->setBool("lookedAtValid", false);
   shader->setBool("isLookedAt", false);
@@ -653,20 +468,6 @@ Renderer::renderDynamicObjects()
   shader->setBool("isDynamicObject", false);
 }
 
-static bool
-supportsFramebufferBlit()
-{
-  return (GLAD_GL_VERSION_3_0
-#ifdef GLAD_GL_ES_VERSION_3_0
-          || GLAD_GL_ES_VERSION_3_0
-#endif
-#ifdef GLAD_GL_EXT_framebuffer_blit
-          || GLAD_GL_EXT_framebuffer_blit
-#endif
-          ) &&
-         glBlitFramebuffer != nullptr;
-}
-
 static void
 readFramebufferToRgba(int width, int height, std::vector<unsigned char>& out)
 {
@@ -696,77 +497,6 @@ readFramebufferToRgba(int width, int height, std::vector<unsigned char>& out)
     }
   }
   glPixelStorei(GL_PACK_ALIGNMENT, prevPack);
-}
-
-void
-Renderer::drawAppDirect(AppSurface* app, Bootable* bootable)
-{
-  int screenWidth = SCREEN_WIDTH;
-  int screenHeight = SCREEN_HEIGHT;
-  int appWidth = app->getWidth();
-  int appHeight = app->getHeight();
-  auto pos = app->getPosition();
-  auto fbIt = frameBuffers.find(app->getTextureId());
-
-    if (!bootable) {
-      GLint prevReadFbo = 0;
-      GLint prevDrawFbo = 0;
-      glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
-      glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFbo);
-      glBindFramebuffer(GL_READ_FRAMEBUFFER, fbIt->second);
-      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFbo);
-      glBlitFramebuffer(
-        // src x1, y1 (flip)
-        0,
-        appHeight,
-        // src x2, y2 (flip)
-        appWidth,
-        0,
-        // dest x1,y1,x2,y2
-        pos[0],
-        pos[1],
-        pos[0] + appWidth,
-        pos[1] + appHeight,
-        GL_COLOR_BUFFER_BIT,
-        GL_NEAREST);
-      glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
-    } else {
-      glActiveTexture(GL_TEXTURE0);
-      glBindTexture(GL_TEXTURE_2D, app->getTextureId());
-      glBindVertexArray(DIRECT_RENDER_VAO);
-      shader->setBool("directRender", true);
-      static int x = -1;
-      static int y = -1;
-      static glm::mat4 model;
-      if (x == -1 || y == -1 || x != bootable->x || y != bootable->y) {
-        model = glm::mat4(1.0);
-
-        model = glm::translate(
-          model,
-          glm::vec3((-0.5 + (float)appWidth / (float)screenWidth / 2 +
-                     (float)bootable->x / (float)screenWidth) *
-                      2,
-
-                    -((-0.5 + (float)appHeight / (float)screenHeight / 2 +
-                       (float)bootable->y / (float)screenHeight) *
-                      2),
-
-                    0));
-
-        model = glm::scale(model,
-          glm::vec3((float)appWidth / ((float)screenWidth),
-
-                                     (float)appHeight / ((float)screenHeight),
-                                     1));
-
-        x = bootable->x;
-        y = bootable->y;
-      }
-      shader->setBool("appTransparent", bootable->transparent);
-      shader->setMatrix4("model", model);
-      glDrawArrays(GL_TRIANGLES, 0, 6);
-      shader->setBool("directRender", false);
-    }
 }
 
 void
@@ -859,35 +589,6 @@ Renderer::mapCursorToScreen(float xPixels, float yPixels) const
   return glm::vec2(xPixels, yPixels);
 }
 void
-Renderer::renderLookedAtFace()
-{
-  Position lookedAt = world->getLookedAtCube();
-  if (lookedAt.valid) {
-    ChunkMesh lookedAtFace = world->meshSelectedCube(lookedAt);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VOXEL_SELECTION_POSITIONS);
-    glBufferSubData(GL_ARRAY_BUFFER,
-                    0,
-                    6 * (sizeof(glm::vec3)),
-                    lookedAtFace.positions.data());
-
-    glBindBuffer(GL_ARRAY_BUFFER, VOXEL_SELECTION_TEX_COORDS);
-    glBufferSubData(GL_ARRAY_BUFFER,
-                    0,
-                    6 * (sizeof(glm::vec2)),
-                    lookedAtFace.texCoords.data());
-
-    glBindVertexArray(VOXEL_SELECTIONS);
-    shader->setBool("isLookedAt", true);
-    shader->setInt("lookedAtBlockType", lookedAtFace.blockTypes[0]);
-    shader->setBool("isMesh", true);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-  }
-  shader->setBool("isLookedAt", false);
-  shader->setBool("isMesh", false);
-}
-
-void
 Renderer::updateShaderUniforms()
 {
   shader->setFloat("time", nowSeconds());
@@ -907,229 +608,6 @@ Renderer::renderChunkMesh()
   glDisable(GL_CULL_FACE);
   glDrawArrays(GL_TRIANGLES, 0, verticesInMesh);
   shader->setBool("isMesh", false);
-}
-
-void Renderer::renderPopup(WaylandApp::Component& popup, WaylandApp::Component& parent) {
-    auto* popupApp = popup.app.get();
-    auto* parentApp = parent.app.get();
-    if (!popupApp || !parentApp) {
-      return;
-    }
-    int popupW = popupApp->getWidth();
-    int popupH = popupApp->getHeight();
-    int parentW = parentApp->getWidth();
-    int parentH = parentApp->getHeight();
-    if (popupW <= 0 || popupH <= 0 || parentW <= 0 || parentH <= 0) {
-      return;
-    }
-    float parentLeft = std::max(0.0f, (SCREEN_WIDTH - parentW) * 0.5f);
-    float parentTop = std::max(0.0f, (SCREEN_HEIGHT - parentH) * 0.5f);
-    int destX = static_cast<int>(parentLeft + popup.offset_x);
-    // Keep popups positioned in the same top-origin space as their parent.
-    int destY = static_cast<int>(parentTop + popup.offset_y);
-
-    if (popupApp->needsTextureImport()) {
-      popupApp->appTexture();
-    }
-    auto fbIt = frameBuffers.find(popupApp->getTextureId());
-    if (fbIt == frameBuffers.end()) {
-      return;
-    }
-    if (!supportsFramebufferBlit()) {
-      return;
-    }
-    GLint prevReadFbo = 0;
-    GLint prevDrawFbo = 0;
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFbo);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbIt->second);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFbo);
-    glBlitFramebuffer(0,
-                      0,
-                      popupW,
-                      popupH,
-                      destX,
-                      destY,
-                      destX + popupW,
-                      destY + popupH,
-                      GL_COLOR_BUFFER_BIT,
-                      GL_NEAREST);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
-}
-
-void
-Renderer::renderApps()
-{
-  auto lookedAtAppEntity = windowManagerSpace->getLookedAtApp();
-  static std::unordered_set<void*> loggedApps;
-  auto wlPositionable =
-    registry->view<WaylandApp::Component, Positionable>(entt::exclude<Bootable>);
-  size_t wlCount = wlPositionable.size_hint();
-  TracyGpuZone("render apps");
-  shader->setBool("appSelected", false);
-
-  shader->setBool("isApp", true);
-  shader->setBool("directRender", false);
-  glBindVertexArray(APP_VAO);
-  // Defensive: ensure app quad attributes are enabled/bound even if VAO state
-  // was clobbered by other GL paths.
-  glBindBuffer(GL_ARRAY_BUFFER, APP_VBO);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(
-    1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-  glEnableVertexAttribArray(1);
-  glDisable(GL_CULL_FACE);
-
-  auto bindAppTexture = [&](WaylandApp* app) {
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, app->getTextureId());
-    return true;
-  };
-  auto renderLayerShell = [&](WaylandApp::Component& comp) {
-    auto* app = comp.app.get();
-    if (!app) {
-      return;
-    }
-    int w = app->getWidth();
-    int h = app->getHeight();
-    if (w <= 0 || h <= 0) {
-      return;
-    }
-    if (app->needsTextureImport()) {
-      app->appTexture();
-    }
-    auto fbIt = frameBuffers.find(app->getTextureId());
-    if (fbIt == frameBuffers.end()) {
-      return;
-    }
-    if (!supportsFramebufferBlit()) {
-      return;
-    }
-    GLint prevReadFbo = 0;
-    GLint prevDrawFbo = 0;
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFbo);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbIt->second);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFbo);
-    const int targetW = comp.screen_w > 0 ? comp.screen_w : static_cast<int>(SCREEN_WIDTH);
-    const int targetH = comp.screen_h > 0 ? comp.screen_h : static_cast<int>(SCREEN_HEIGHT);
-    int destW = w;
-    int destH = h;
-    int destX = comp.screen_x;
-    // comp.screen_y is in top-origin space; OpenGL blit target uses bottom-origin.
-    int destY = targetH - comp.screen_y - destH;
-    glBlitFramebuffer(0,
-                      0,
-                      w,
-                      h,
-                      destX,
-                      destY,
-                      destX + destW,
-                      destY + destH,
-                      GL_COLOR_BUFFER_BIT,
-                      GL_NEAREST);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
-  };
-
-  // Wayland apps: render any that were registered by the wlroots backend.
-  for (auto [entity, comp, positionable] : wlPositionable.each()) {
-    auto* app = comp.app.get();
-    if (!app) {
-      continue;
-    }
-
-    // Upload latest buffer only when a new commit arrived, then bind to the
-    // app's dedicated unit to avoid stale or shared textures when multiple
-    // Wayland apps are present.
-    if (app->needsTextureImport()) {
-      app->appTexture();
-    }
-    if (!bindAppTexture(app)) {
-      continue;
-    }
-    // Keep the in-world quad at the positionable's size; just track the app's
-    // pixel size for logging and aspect ratio.
-    float sx = static_cast<float>(app->getWidth()) /
-               static_cast<float>(SCREEN_WIDTH);
-    float sy = static_cast<float>(app->getHeight()) /
-               static_cast<float>(SCREEN_HEIGHT);
-    glm::mat4 model = positionable.modelMatrix;
-    shader->setMatrix4("model", model);
-    shader->setMatrix4("bootableScale", app->getHeightScalar());
-    shader->setBool("appTransparent", false);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-
-    // If focused, also draw directly to screen to ensure visibility.
-    if (wm && wm->getCurrentlyFocusedApp().has_value() &&
-        wm->getCurrentlyFocusedApp().value() == entity) {
-      if (!bindAppTexture(app)) {
-        continue;
-      }
-      shader->setBool("directRender", true);
-      glm::mat4 model = glm::mat4(1.0f);
-      float sx = static_cast<float>(app->getWidth()) /
-                 static_cast<float>(SCREEN_WIDTH);
-      float sy = static_cast<float>(app->getHeight()) /
-                 static_cast<float>(SCREEN_HEIGHT);
-      model = glm::scale(model, glm::vec3(sx, sy, 1.0f));
-      shader->setMatrix4("model", model);
-      glBindVertexArray(DIRECT_RENDER_VAO);
-      GLboolean depthMask = GL_TRUE;
-      glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
-      glDisable(GL_DEPTH_TEST);
-      glDepthMask(GL_FALSE); // avoid clobbering depth for in-world apps
-      glDrawArrays(GL_TRIANGLES, 0, 6);
-      glDepthMask(depthMask);
-      glEnable(GL_DEPTH_TEST);
-      shader->setBool("directRender", false);
-      // Restore model matrix/VAO for subsequent in-world draws.
-      shader->setMatrix4("model", positionable.modelMatrix);
-      glBindVertexArray(APP_VAO);
-    }
-  }
-
-  // Direct-render Wayland accessory apps (popups/menus) relative to their
-  // parent surface so they land at the correct on-screen position.
-  if (wm && registry) {
-    auto focused = wm->getCurrentlyFocusedApp();
-    entt::entity focusedEnt =
-      focused.has_value() ? focused.value() : entt::null;
-    auto layerShells =
-      registry->view<WaylandApp::Component>(entt::exclude<Positionable>);
-    for (auto [ent, comp] : layerShells.each()) {
-      if (!comp.layer_shell) {
-        continue;
-      }
-      renderLayerShell(comp);
-    }
-    if (focusedEnt != entt::null) {
-      auto accessories =
-        registry->view<WaylandApp::Component>(entt::exclude<Positionable>);
-      for (auto [ent, comp] : accessories.each()) {
-        if (!comp.accessory) {
-          continue;
-        }
-        if (comp.layer_shell) {
-          continue;
-        }
-        if (comp.parent == entt::null || comp.parent != focusedEnt) {
-          continue;
-        }
-        if (!registry->valid(comp.parent)) {
-          continue;
-        }
-        auto* parentComp = registry->try_get<WaylandApp::Component>(comp.parent);
-        if (!parentComp || !parentComp->app) {
-          continue;
-        }
-        renderPopup(comp, *parentComp);
-      }
-    }
-  }
-
-  shader->setBool("isApp", false);
 }
 
 void
@@ -1227,32 +705,25 @@ Renderer::lightUniforms(RenderPerspective perspective,
 {
   auto lightView = registry->view<Light, Positionable>();
   int lightIndex = 0;
-  int lastTextureUnit;
   for (auto [entity, light, positionable] : lightView.each()) {
-    shader->setVec3("lightPos[" + std::to_string(lightIndex) + "]",
-                    positionable.pos);
-    shader->setVec3("lightColor[" + std::to_string(lightIndex) + "]",
-                    light.color);
-    shader->setFloat("far_plane[" + std::to_string(lightIndex) + "]",
-                     light.farPlane);
+    if (lightIndex < MAX_LIGHTS) {
+      shader->setVec3(kLightPositionNames[lightIndex], positionable.pos);
+      shader->setVec3(kLightColorNames[lightIndex], light.color);
+      shader->setFloat(kFarPlaneNames[lightIndex], light.farPlane);
+    }
     if (perspective == LIGHT && fromLight == entity) {
       shader->setInt("fromLightIndex", lightIndex);
-      cout << "lightIndex: " << lightIndex << endl;
       for (unsigned int i = 0; i < 6; ++i) {
-        shader->setMatrix4("shadowMatrices[" + std::to_string(i) + "]",
-                           light.shadowTransforms[i]);
+        shader->setMatrix4(kShadowMatrixNames[i], light.shadowTransforms[i]);
       }
     }
-    if (perspective == CAMERA) {
-      shader->setInt("depthCubeMap" + std::to_string(lightIndex),
-                     light.textureUnit);
-      // THIS IS A HACK
-      lastTextureUnit = light.textureUnit;
+    if (perspective == CAMERA && lightIndex < MAX_LIGHTS) {
+      shader->setInt(kDepthCubeMapNames[lightIndex], light.textureUnit);
     }
 
     // THIS IS A HACK. If I exceed 5 lights, use texture array (proper)
-    for (int i = lightIndex; i < MAX_LIGHTS; i++) {
-      shader->setInt("depthCubeMap" + std::to_string(i), light.textureUnit);
+    for (int i = lightIndex; i < MAX_LIGHTS; ++i) {
+      shader->setInt(kDepthCubeMapNames[i], light.textureUnit);
     }
     lightIndex++;
   }
@@ -1341,7 +812,7 @@ Renderer::render(RenderPerspective perspective,
   currentFbo = static_cast<unsigned int>(boundFbo);
   glFrontFace(invertY ? GL_CW : GL_CCW);
   if (perspective == CAMERA) {
-    shader = cameraShader;
+    shader = cameraShader.get();
     shader->reloadIfChanged();
     shader->use();
     // must use prior to updating uniforms
@@ -1352,7 +823,7 @@ Renderer::render(RenderPerspective perspective,
     if (!shadowsEnabled || depthShader == nullptr) {
       return;
     }
-    shader = depthShader;
+    shader = depthShader.get();
     shader->reloadIfChanged();
     shader->use();
   }
@@ -1364,7 +835,7 @@ Renderer::render(RenderPerspective perspective,
     renderVoxels();
     renderApps();
     if (typedKeyOverlay) {
-      typedKeyOverlay->render(cursorShader,
+      typedKeyOverlay->render(cursorShader.get(),
                               SCREEN_WIDTH,
                               SCREEN_HEIGHT,
                               wm && wm->hasCurrentOrPendingFocus());
@@ -1377,34 +848,6 @@ Camera*
 Renderer::getCamera()
 {
   return camera;
-}
-
-void
-Renderer::registerApp(AppSurface* app)
-{
-  if (!app) {
-    return;
-  }
-  // Use index 0 slot, unit 0; avoids consuming extra texture units.
-  auto textureId = app->createTexture();
-  app->appTexture();
-
-  unsigned int framebufferId;
-  glGenFramebuffers(1, &framebufferId);
-  frameBuffers[textureId] = framebufferId;
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, framebufferId);
-  glFramebufferTexture2D(GL_READ_FRAMEBUFFER,
-                         GL_COLOR_ATTACHMENT0,
-                         GL_TEXTURE_2D,
-                         textureId,
-                         0);
-}
-
-void
-Renderer::deregisterApp(AppSurface* surface)
-{
-  glDeleteFramebuffers(1, &frameBuffers[surface->getTextureId()]);
-  frameBuffers.erase(surface->getTextureId());
 }
 
 void
@@ -1422,10 +865,4 @@ Renderer::wireWindowManager(WindowManager::WindowManagerPtr wm,
   this->windowManagerSpace = windowManagerSpace;
 }
 
-Renderer::~Renderer()
-{
-  delete shader;
-  for (auto& t : textures) {
-    delete t.second;
-  }
-}
+Renderer::~Renderer() = default;

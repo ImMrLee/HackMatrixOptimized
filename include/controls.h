@@ -69,6 +69,18 @@ class Controls
   };
   std::queue<KeysymEvent> keysymQueue;
   std::mutex keysymMutex;
+
+  // Synthetic key events (KEY_REPLAY), dispatched by pollPressedKeys() when due
+  // so a press and its release land on different frames.
+  struct ScheduledKeyEvent
+  {
+    double whenSeconds = 0.0;
+    xkb_keysym_t sym = XKB_KEY_NoSymbol;
+    bool pressed = false;
+    bool modifierHeld = false;
+    bool shiftHeld = false;
+  };
+  std::vector<ScheduledKeyEvent> scheduledKeyEvents;
   std::shared_ptr<TypedKeyOverlay> typedKeyOverlay;
 
   void handleMovement();
@@ -80,6 +92,8 @@ class Controls
   void handleFocus();
   bool handleUnfocusApp();
   bool handleCloseFocusedApp();
+  bool handleMoveFocusedApp();
+  bool handleResizeFocusedApp();
   void handleDMenu();
   void handleScreenshot();
   void handleSave();
@@ -132,6 +146,12 @@ public:
                                bool pressed,
                                bool modifierHeld,
                                bool shiftHeld);
+  // Queue a synthetic key (e.g. from the KEY_REPLAY API) `delaySeconds` from now.
+  void scheduleKeySym(xkb_keysym_t sym,
+                      bool pressed,
+                      bool modifierHeld,
+                      bool shiftHeld,
+                      double delaySeconds);
   void resetWaylandInputState();
   void applyMovementInput(bool forward, bool back, bool left, bool right);
   void clearMovementInput();

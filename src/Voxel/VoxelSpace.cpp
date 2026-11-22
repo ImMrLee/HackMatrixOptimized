@@ -196,16 +196,72 @@ void
 VoxelSpace::add(glm::vec3 position, float size, glm::vec3 color)
 {
   voxels.emplace_back(position, size, color);
+  indexDirty = true;
+}
+
+VoxelSpace::CellKey
+VoxelSpace::cellFor(glm::vec3 position)
+{
+  constexpr float kCellSize = 1.0f;
+  return { static_cast<int>(std::floor(position.x / kCellSize)),
+           static_cast<int>(std::floor(position.y / kCellSize)),
+           static_cast<int>(std::floor(position.z / kCellSize)) };
+}
+
+void
+VoxelSpace::ensureIndex() const
+{
+  if (!indexDirty) {
+    return;
+  }
+  index.clear();
+  index.reserve(voxels.size());
+  for (std::size_t i = 0; i < voxels.size(); ++i) {
+    index[cellFor(voxels[i].getPosition())].push_back(i);
+  }
+  indexDirty = false;
 }
 
 bool
 VoxelSpace::has(glm::vec3 position, float size) const
 {
   const float EPS = 0.0001f;
-  for (const auto& v : voxels) {
-    if (fabs(v.getSize() - size) < EPS &&
-        glm::length(v.getPosition() - position) < EPS) {
-      return true;
+  if (voxels.empty()) {
+    return false;
+  }
+
+  auto matches = [&](const Voxel& v) {
+    return std::fabs(v.getSize() - size) < EPS &&
+           glm::length(v.getPosition() - position) < EPS;
+  };
+
+  // A hash index costs more than it saves for tiny sets (e.g. the a few demo
+  // voxels the renderer seeds at startup).
+  if (voxels.size() <= 64) {
+    for (const auto& v : voxels) {
+      if (matches(v)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  ensureIndex();
+  const CellKey base = cellFor(position);
+  for (int dx = -1; dx <= 1; ++dx) {
+    for (int dy = -1; dy <= 1; ++dy) {
+      for (int dz = -1; dz <= 1; ++dz) {
+        auto it = index.find(
+          CellKey{ base.x + dx, base.y + dy, base.z + dz });
+        if (it == index.end()) {
+          continue;
+        }
+        for (std::size_t i : it->second) {
+          if (matches(voxels[i])) {
+            return true;
+          }
+        }
+      }
     }
   }
   return false;
@@ -256,6 +312,9 @@ VoxelSpace::remove(glm::vec3 min, glm::vec3 max)
                                        pos.z <= upper.z + EPS;
                               }),
                voxels.end());
+  if (before != voxels.size()) {
+    indexDirty = true;
+  }
   return before - voxels.size();
 }
 
@@ -263,4 +322,6 @@ void
 VoxelSpace::clear()
 {
   voxels.clear();
+  index.clear();
+  indexDirty = false;
 }

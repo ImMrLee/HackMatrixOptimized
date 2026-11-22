@@ -328,12 +328,15 @@ static CompositorHandle start_compositor_with_env(const std::string& extraEnv = 
     launchFlags = "--drm";
   }
   g_lastLaunchFlags = launchFlags;
-  std::string bin = "./matrix-wlroots-debug";
+  std::string bin = "./matrix";
+#ifdef MATRIX_TEST_DEFAULT_COMPOSITOR_BIN
+  // Set by CMake to the freshly built binary; the old ./matrix-wlroots-debug
+  // name never existed as a CMake target.
+  bin = MATRIX_TEST_DEFAULT_COMPOSITOR_BIN;
+#endif
   if (const char* binEnv = std::getenv("MATRIX_WLROOTS_BIN")) {
     bin = binEnv;
-  } else if (fs::exists("./matrix-debug")) {
-    bin = "./matrix-debug";
-  } else if (!fs::exists(bin)) {
+  } else if (!fs::exists(bin) && fs::exists("./matrix")) {
     bin = "./matrix";
   }
   // Default API binding for compositor/tests; allow overrides via extraEnv.

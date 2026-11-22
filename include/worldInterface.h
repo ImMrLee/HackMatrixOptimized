@@ -60,4 +60,7 @@ public:
   virtual ChunkMesh meshSelectedCube(Position position) = 0;
   virtual shared_ptr<Chunk> getChunk(int chunkX, int chunkZ) = 0;
   virtual shared_ptr<DynamicObjectSpace> getDynamicObjects() = 0;
+  // World is deleted through a World* in Engine::~Engine() and World derives
+  // from this interface, so the interface must own a virtual destructor.
+  virtual ~WorldInterface() = default;
 };

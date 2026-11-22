@@ -16,11 +16,13 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <spdlog/common.h>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <zmq/zmq.hpp>
+#include <xkbcommon/xkbcommon.h>
 #include <unordered_set>
 #include "time_utils.h"
 #undef Status
@@ -46,6 +48,26 @@ log_to_tmp_api(const std::string& msg)
   }
   std::fwrite(msg.c_str(), 1, msg.size(), f);
   std::fclose(f);
+}
+
+// Serialize `response` and send it as one ZMQ frame.
+// SerializeToString() is [[nodiscard]]; ignoring it meant a serialization
+// failure sent an empty, undecodable reply with no diagnostic.
+void
+sendApiResponse(zmq::socket_t& socket,
+                const ApiRequestResponse& response,
+                const char* what)
+{
+  std::string payload;
+  if (!response.SerializeToString(&payload)) {
+    log_to_tmp_api(std::string("api: failed to serialize ") + what +
+                   " response\n");
+  }
+  zmq::message_t reply(payload.size());
+  if (!payload.empty()) {
+    std::memcpy(reply.data(), payload.c_str(), payload.size());
+  }
+  socket.send(reply, zmq::send_flags::none);
 }
 
 glm::vec3
@@ -169,7 +191,18 @@ Api::ProtobufCommandServer::poll()
 
     if (result >= 0) {
       ApiRequest apiRequest;
-      apiRequest.ParseFromArray(recv.data(), recv.size());
+      if (!apiRequest.ParseFromArray(recv.data(), recv.size())) {
+        // A malformed frame would otherwise be processed as a default-
+        // constructed request (type 0), mutating state with garbage. A REP
+        // socket requires exactly one send per recv, so still reply - returning
+        // without one leaves the socket in an invalid state (EFSM) and wedges
+        // the API in a busy loop.
+        log_to_tmp_api("api: unparseable request\n");
+        ApiRequestResponse errorResponse;
+        errorResponse.set_success(false);
+        sendApiResponse(socket, errorResponse, "parse-error");
+        return;
+      }
 
       api->grabBatched();
       auto batchedRequests = api->getBatchedRequests();
@@ -204,11 +237,7 @@ Api::ProtobufCommandServer::poll()
                    pending->ready ? 1 : 0);
           log_to_tmp_api(std::string(buf));
         }
-        std::string serializedResponse;
-        response.SerializeToString(&serializedResponse);
-        zmq::message_t reply(serializedResponse.size());
-        memcpy(reply.data(), serializedResponse.c_str(), serializedResponse.size());
-        socket.send(reply, zmq::send_flags::none);
+        sendApiResponse(socket, response, "status");
         return;
       } else if (apiRequest.type() == LIST_ENTITIES ||
                  apiRequest.type() == GET_COMPONENT ||
@@ -236,11 +265,7 @@ Api::ProtobufCommandServer::poll()
           response.set_requestid(request.id);
           response.set_success(false);
         }
-        std::string serializedResponse;
-        response.SerializeToString(&serializedResponse);
-        zmq::message_t reply(serializedResponse.size());
-        memcpy(reply.data(), serializedResponse.c_str(), serializedResponse.size());
-        socket.send(reply, zmq::send_flags::none);
+        sendApiResponse(socket, response, "response");
         return;
       } else {
         batchedRequests->push(request);
@@ -254,18 +279,12 @@ Api::ProtobufCommandServer::poll()
       }
       response.set_success(true);
 
-      // Serialize the protocol buffer object to a byte array
-      std::string serializedResponse;
-      response.SerializeToString(&serializedResponse);
-
-      // Create a zmq::message_t object from the serialized data
-      zmq::message_t reply(serializedResponse.size());
-      memcpy(
-        reply.data(), serializedResponse.c_str(), serializedResponse.size());
-
-      socket.send(reply, zmq::send_flags::none);
+      sendApiResponse(socket, response, "request");
     }
   } catch (zmq::error_t& e) {
+    // Never spin at 100% CPU if the socket ends up in an unexpected state
+    // (e.g. EFSM after a protocol misuse).
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 }
 
@@ -296,445 +315,537 @@ Api::fulfillPendingResponse(int64_t requestId,
 void
 Api::processBatchedRequest(BatchedRequest batchedRequest)
 {
-  auto entityId = (entt::entity)batchedRequest.request.entityid();
-  switch (batchedRequest.request.type()) {
-    case MOVE: {
-      auto move = batchedRequest.request.move();
-      systems::translate(registry,
-                         entityId,
-                         glm::vec3(move.xdelta(), move.ydelta(), move.zdelta()),
-                         move.unitspersecond());
-      break;
-    }
-    case TURN_KEY: {
-      auto turnKey = batchedRequest.request.turnkey();
-      if (turnKey.on()) {
-        systems::turnKey(registry, entityId);
-      } else {
-        systems::unturnKey(registry, entityId);
-      }
-      break;
-    }
-    case PLAYER_MOVE: {
-      auto playerMove = batchedRequest.request.playermove();
-      glm::vec3 pos(playerMove.position().x(),
-                    playerMove.position().y(),
-                    playerMove.position().z());
-      glm::vec3 rotation(playerMove.rotation().x(),
-                         playerMove.rotation().y(),
-                         playerMove.rotation().z());
-      controls->moveTo(pos, rotation, playerMove.unitspersecond());
-      break;
-    }
-    case UNFOCUS_WINDOW: {
-      if (wm) {
-        wm->unfocusApp();
-      }
-      break;
-    }
-    case ADD_VOXELS: {
-      ApiRequestResponse response;
-      response.set_requestid(batchedRequest.id);
-      auto voxels = batchedRequest.request.addvoxels();
-      std::vector<glm::vec3> positions;
-      positions.reserve(voxels.voxels_size());
-      for (const auto& v : voxels.voxels()) {
-        positions.emplace_back(v.x(), v.y(), v.z());
-      }
-      float size = voxels.size() > 0 ? voxels.size() : 1.0f;
-      bool replace = voxels.replace();
-      glm::vec3 color(1.0f);
-      vector<glm::vec3> colors;
-      if (voxels.has_color()) {
-        color = glm::vec3(voxels.color().x(), voxels.color().y(), voxels.color().z());
-      }
-      if (voxels.colors_size() > 0) {
-        colors.reserve(voxels.colors_size());
-        for (const auto& c : voxels.colors()) {
-          colors.emplace_back(c.x(), c.y(), c.z());
-        }
-      }
-      // Allow empty positions when replace is true so callers can clear voxels.
-      bool shouldUpdate = replace || !positions.empty();
-      if (world != nullptr && shouldUpdate) {
-        auto ids = colors.empty()
-                     ? world->addApiVoxels(positions, size, color, replace)
-                     : world->addApiVoxels(positions, size, colors, replace);
-        for (auto id : ids) {
-          response.add_voxel_ids(id);
-        }
-        response.set_success(true);
-      } else if (renderer != nullptr && shouldUpdate) {
-        if (logger) {
-          logger->info("AddVoxels: count={}, replace={}, size={}",
-                       positions.size(),
-                       replace,
-                       size);
-        }
-        std::cout << "[API] AddVoxels count=" << positions.size()
-                  << " replace=" << replace << " size=" << size
-                  << " color=(" << color.x << "," << color.y << "," << color.z
-                  << ")" << std::endl;
-        renderer->setLines(world != nullptr ? world->getLines()
-                                            : std::vector<Line>{});
-        renderer->addVoxels(positions, replace, size, color);
-        response.set_success(true);
-      } else {
-        response.set_success(false);
-      }
-      fulfillPendingResponse(batchedRequest.id, response);
-      break;
-    }
-    case CLEAR_VOXELS: {
-      auto clear = batchedRequest.request.clearvoxels();
-      if (clear.has_ids()) {
-        ApiRequestResponse response;
-        response.set_requestid(batchedRequest.id);
-        vector<int64_t> ids;
-        ids.reserve(clear.ids().ids_size());
-        for (auto id : clear.ids().ids()) {
-          ids.push_back(id);
-          response.add_voxel_ids(id);
-        }
-        if (world != nullptr) {
-          world->clearApiVoxelsByIds(ids);
-          response.set_success(true);
-        } else {
-          response.set_success(false);
-        }
-        fulfillPendingResponse(batchedRequest.id, response);
-        break;
-      }
+  using Handler = void (Api::*)(const BatchedRequest&);
+  // Dispatch table keeps each request isolated. Unknown types (and STATUS,
+  // which poll() handles synchronously) are simply ignored, matching the old
+  // switch's `default: break;`.
+  static const std::map<MessageType, Handler> handlers = {
+    { MOVE, &Api::handleMove },
+    { TURN_KEY, &Api::handleTurnKey },
+    { PLAYER_MOVE, &Api::handlePlayerMove },
+    { UNFOCUS_WINDOW, &Api::handleUnfocusWindow },
+    { ADD_VOXELS, &Api::handleAddVoxels },
+    { CLEAR_VOXELS, &Api::handleClearVoxels },
+    { CONFIRM_ACTION, &Api::handleConfirmAction },
+    { QUIT, &Api::handleQuit },
+    { POINTER_REPLAY, &Api::handlePointerReplay },
+    { KEY_REPLAY, &Api::handleKeyReplay },
+    { CREATE_ENTITY, &Api::handleCreateEntity },
+    { DELETE_ENTITY, &Api::handleDeleteEntity },
+    { LIST_ENTITIES, &Api::handleListEntities },
+    { GET_COMPONENT, &Api::handleGetComponent },
+    { ADD_COMPONENT, &Api::handleAddComponent },
+    { DELETE_COMPONENT, &Api::handleDeleteComponent },
+    { EDIT_COMPONENT, &Api::handleEditComponent },
+  };
 
-      ApiRequestResponse response;
-      response.set_requestid(batchedRequest.id);
-      if (!clear.has_box()) {
-        response.set_success(false);
-        fulfillPendingResponse(batchedRequest.id, response);
-        break;
-      }
+  auto it = handlers.find(batchedRequest.request.type());
+  if (it != handlers.end()) {
+    (this->*(it->second))(batchedRequest);
+  }
+}
 
-      const auto& box = clear.box();
-      glm::vec3 min(box.x().min(), box.y().min(), box.z().min());
-      glm::vec3 max(box.x().max(), box.y().max(), box.z().max());
-      if (logger) {
-        logger->info("ClearVoxels request: min=({}, {}, {}), max=({}, {}, {})",
-                     min.x,
-                     min.y,
-                     min.z,
-                     max.x,
-                     max.y,
-                     max.z);
-      }
-      std::cout << "[API] ClearVoxels request min=(" << min.x << ", " << min.y
-                << ", " << min.z << ") max=(" << max.x << ", " << max.y << ", "
-                << max.z << ")" << std::endl;
-      if (world != nullptr) {
-        world->clearDynamicObjectsInBox(min, max);
-        response.set_success(true);
-      } else {
-        response.set_success(false);
-      }
-      fulfillPendingResponse(batchedRequest.id, response);
-      break;
+void
+Api::handleMove(const BatchedRequest& batchedRequest)
+{
+  auto entityId = static_cast<entt::entity>(batchedRequest.request.entityid());
+  auto move = batchedRequest.request.move();
+  systems::translate(registry,
+                     entityId,
+                     glm::vec3(move.xdelta(), move.ydelta(), move.zdelta()),
+                     move.unitspersecond());
+}
+
+void
+Api::handleTurnKey(const BatchedRequest& batchedRequest)
+{
+  auto entityId = static_cast<entt::entity>(batchedRequest.request.entityid());
+  auto turnKey = batchedRequest.request.turnkey();
+  if (turnKey.on()) {
+    systems::turnKey(registry, entityId);
+  } else {
+    systems::unturnKey(registry, entityId);
+  }
+}
+
+void
+Api::handlePlayerMove(const BatchedRequest& batchedRequest)
+{
+  auto playerMove = batchedRequest.request.playermove();
+  glm::vec3 pos(playerMove.position().x(),
+                playerMove.position().y(),
+                playerMove.position().z());
+  glm::vec3 rotation(playerMove.rotation().x(),
+                     playerMove.rotation().y(),
+                     playerMove.rotation().z());
+  controls->moveTo(pos, rotation, playerMove.unitspersecond());
+}
+
+void
+Api::handleUnfocusWindow(const BatchedRequest&)
+{
+  if (wm) {
+    wm->unfocusApp();
+  }
+}
+
+void
+Api::handleAddVoxels(const BatchedRequest& batchedRequest)
+{
+  ApiRequestResponse response;
+  response.set_requestid(batchedRequest.id);
+  auto voxels = batchedRequest.request.addvoxels();
+  std::vector<glm::vec3> positions;
+  positions.reserve(voxels.voxels_size());
+  for (const auto& v : voxels.voxels()) {
+    positions.emplace_back(v.x(), v.y(), v.z());
+  }
+  float size = voxels.size() > 0 ? voxels.size() : 1.0f;
+  bool replace = voxels.replace();
+  glm::vec3 color(1.0f);
+  vector<glm::vec3> colors;
+  if (voxels.has_color()) {
+    color = glm::vec3(voxels.color().x(), voxels.color().y(), voxels.color().z());
+  }
+  if (voxels.colors_size() > 0) {
+    colors.reserve(voxels.colors_size());
+    for (const auto& c : voxels.colors()) {
+      colors.emplace_back(c.x(), c.y(), c.z());
     }
-    case CONFIRM_ACTION: {
-      auto confirm = batchedRequest.request.confirmaction();
-      confirmClearArea(confirm.actionid());
-      break;
+  }
+  // Allow empty positions when replace is true so callers can clear voxels.
+  bool shouldUpdate = replace || !positions.empty();
+  if (world != nullptr && shouldUpdate) {
+    auto ids = colors.empty()
+                 ? world->addApiVoxels(positions, size, color, replace)
+                 : world->addApiVoxels(positions, size, colors, replace);
+    for (auto id : ids) {
+      response.add_voxel_ids(id);
     }
-    case QUIT: {
-      // Allow external harnesses/tests to terminate the compositor cleanly.
-      if (logger) {
-        logger->info("Received QUIT request; terminating display");
-      }
-      log_to_tmp_api("api quit requested\n");
-      if (display) {
-        wl_display_terminate(display);
-      }
-      break;
+    response.set_success(true);
+  } else if (renderer != nullptr && shouldUpdate) {
+    if (logger) {
+      logger->info("AddVoxels: count={}, replace={}, size={}",
+                   positions.size(),
+                   replace,
+                   size);
     }
-    case POINTER_REPLAY: {
-      if (controls) {
-        const auto& replay = batchedRequest.request.pointerreplay();
-        uint64_t cumulative = 0;
-        for (const auto& e : replay.entries()) {
-          cumulative += e.delay_ms();
-          // Deliver immediately; delay handling could be extended later if needed.
-          bool handled = controls->handlePointerButton(e.button(), e.pressed());
-          {
-            char buf[160];
-            snprintf(buf,
-                     sizeof(buf),
-                     "api pointer replay button=%u pressed=%d handled=%d cumulative_ms=%llu\n",
-                     e.button(),
-                     e.pressed() ? 1 : 0,
-                     handled ? 1 : 0,
-                     (unsigned long long)cumulative);
-            log_to_tmp_api(std::string(buf));
-          }
-        }
-      }
-      break;
+    renderer->setLines(world != nullptr ? world->getLines()
+                                        : std::vector<Line>{});
+    renderer->addVoxels(positions, replace, size, color);
+    response.set_success(true);
+  } else {
+    response.set_success(false);
+  }
+  fulfillPendingResponse(batchedRequest.id, response);
+}
+
+void
+Api::handleClearVoxels(const BatchedRequest& batchedRequest)
+{
+  auto clear = batchedRequest.request.clearvoxels();
+  if (clear.has_ids()) {
+    ApiRequestResponse response;
+    response.set_requestid(batchedRequest.id);
+    vector<int64_t> ids;
+    ids.reserve(clear.ids().ids_size());
+    for (auto id : clear.ids().ids()) {
+      ids.push_back(id);
+      response.add_voxel_ids(id);
     }
-    case CREATE_ENTITY: {
-      if (registry) {
-        registry->createPersistent();
-      }
-      break;
+    if (world != nullptr) {
+      world->clearApiVoxelsByIds(ids);
+      response.set_success(true);
+    } else {
+      response.set_success(false);
     }
-    case DELETE_ENTITY: {
-      if (registry) {
-        entt::entity target =
-          static_cast<entt::entity>(batchedRequest.request.entityid());
-        if (registry->valid(target)) {
-          registry->depersist(target);
-        }
-      }
-      break;
+    fulfillPendingResponse(batchedRequest.id, response);
+    return;
+  }
+
+  ApiRequestResponse response;
+  response.set_requestid(batchedRequest.id);
+  if (!clear.has_box()) {
+    response.set_success(false);
+    fulfillPendingResponse(batchedRequest.id, response);
+    return;
+  }
+
+  const auto& box = clear.box();
+  glm::vec3 min(box.x().min(), box.y().min(), box.z().min());
+  glm::vec3 max(box.x().max(), box.y().max(), box.z().max());
+  if (logger) {
+    logger->info("ClearVoxels request: min=({}, {}, {}), max=({}, {}, {})",
+                 min.x,
+                 min.y,
+                 min.z,
+                 max.x,
+                 max.y,
+                 max.z);
+  }
+  if (world != nullptr) {
+    world->clearDynamicObjectsInBox(min, max);
+    response.set_success(true);
+  } else {
+    response.set_success(false);
+  }
+  fulfillPendingResponse(batchedRequest.id, response);
+}
+
+void
+Api::handleConfirmAction(const BatchedRequest& batchedRequest)
+{
+  auto confirm = batchedRequest.request.confirmaction();
+  confirmClearArea(confirm.actionid());
+}
+
+void
+Api::handleQuit(const BatchedRequest&)
+{
+  // Allow external harnesses/tests to terminate the compositor cleanly.
+  if (logger) {
+    logger->info("Received QUIT request; terminating display");
+  }
+  log_to_tmp_api("api quit requested\n");
+  if (display) {
+    wl_display_terminate(display);
+  }
+}
+
+void
+Api::handlePointerReplay(const BatchedRequest& batchedRequest)
+{
+  if (!controls) {
+    return;
+  }
+  const auto& replay = batchedRequest.request.pointerreplay();
+  uint64_t cumulative = 0;
+  for (const auto& e : replay.entries()) {
+    cumulative += e.delay_ms();
+    // Deliver immediately; delay handling could be extended later if needed.
+    bool handled = controls->handlePointerButton(e.button(), e.pressed());
+    {
+      char buf[160];
+      snprintf(buf,
+               sizeof(buf),
+               "api pointer replay button=%u pressed=%d handled=%d cumulative_ms=%llu\n",
+               e.button(),
+               e.pressed() ? 1 : 0,
+               handled ? 1 : 0,
+               (unsigned long long)cumulative);
+      log_to_tmp_api(std::string(buf));
     }
-    case LIST_ENTITIES: {
-      ApiRequestResponse response;
-      response.set_requestid(batchedRequest.id);
-      bool success = false;
-      if (registry) {
+  }
+}
+
+void
+Api::handleKeyReplay(const BatchedRequest& batchedRequest)
+{
+  if (!controls) {
+    return;
+  }
+  // A press and its release must land on different frames so Controls::poll()
+  // observes the key while it is held; schedule both on the controls timeline.
+  // 150 ms survives a slow frame (two pollPressedKeys() calls per frame).
+  constexpr double kHoldSeconds = 0.15;
+  const auto& replay = batchedRequest.request.keyreplay();
+
+  // KEY_REPLAY has no explicit modifier-release event. Treat a modifier keysym
+  // in the sequence as held for the keys that follow it.
+  bool modifierHeld = false;
+  bool shiftHeld = false;
+
+  double at = 0.0;
+  for (const auto& entry : replay.entries()) {
+    const xkb_keysym_t sym = xkb_keysym_from_name(
+      entry.sym().c_str(), XKB_KEYSYM_CASE_INSENSITIVE);
+    if (sym == XKB_KEY_NoSymbol) {
+      log_to_tmp_api("api key replay: unknown keysym '" + entry.sym() + "'\n");
+      continue;
+    }
+    switch (sym) {
+      case XKB_KEY_Super_L:
+      case XKB_KEY_Super_R:
+        modifierHeld = true;
+        continue;
+      case XKB_KEY_Shift_L:
+      case XKB_KEY_Shift_R:
+        shiftHeld = true;
+        continue;
+      default:
+        break;
+    }
+
+    controls->scheduleKeySym(sym, true, modifierHeld, shiftHeld, at);
+    controls->scheduleKeySym(sym, false, modifierHeld, shiftHeld,
+                             at + kHoldSeconds);
+    at += kHoldSeconds + static_cast<double>(entry.delay_ms()) / 1000.0;
+  }
+}
+
+void
+Api::handleCreateEntity(const BatchedRequest&)
+{
+  if (registry) {
+    registry->createPersistent();
+  }
+}
+
+void
+Api::handleDeleteEntity(const BatchedRequest& batchedRequest)
+{
+  if (!registry) {
+    return;
+  }
+  entt::entity target =
+    static_cast<entt::entity>(batchedRequest.request.entityid());
+  if (registry->valid(target)) {
+    registry->depersist(target);
+  }
+}
+
+void
+Api::handleListEntities(const BatchedRequest& batchedRequest)
+{
+  ApiRequestResponse response;
+  response.set_requestid(batchedRequest.id);
+  bool success = false;
+  if (registry) {
+    success = true;
+    ComponentType filter = COMPONENT_TYPE_UNSPECIFIED;
+    if (batchedRequest.request.has_listentities()) {
+      filter = batchedRequest.request.listentities().filter_type();
+    }
+    auto view = registry->view<Persistable>();
+    for (auto [entity, persistable] : view.each()) {
+      if (filter == COMPONENT_TYPE_POSITIONABLE &&
+          !registry->any_of<Positionable>(entity)) {
+        continue;
+      }
+      if (filter == COMPONENT_TYPE_MODEL &&
+          !registry->any_of<Model>(entity)) {
+        continue;
+      }
+      if (filter == COMPONENT_TYPE_LIGHT &&
+          !registry->any_of<Light>(entity)) {
+        continue;
+      }
+      const auto entityId = static_cast<int64_t>(entity);
+      response.add_entity_ids(entityId);
+      auto* info = response.add_entity_components();
+      info->set_entity_id(entityId);
+      if (registry->any_of<Positionable>(entity)) {
+        info->add_component_types(COMPONENT_TYPE_POSITIONABLE);
+      }
+      if (registry->any_of<Model>(entity)) {
+        info->add_component_types(COMPONENT_TYPE_MODEL);
+      }
+      if (registry->any_of<Light>(entity)) {
+        info->add_component_types(COMPONENT_TYPE_LIGHT);
+      }
+    }
+  }
+  response.set_success(success);
+  fulfillPendingResponse(batchedRequest.id, response);
+}
+
+void
+Api::handleGetComponent(const BatchedRequest& batchedRequest)
+{
+  ApiRequestResponse response;
+  response.set_requestid(batchedRequest.id);
+  bool success = false;
+  if (registry && batchedRequest.request.has_getcomponent()) {
+    entt::entity target =
+      static_cast<entt::entity>(batchedRequest.request.entityid());
+    if (registry->valid(target)) {
+      ComponentType type =
+        batchedRequest.request.getcomponent().component_type();
+      auto* component = response.mutable_component();
+      if (type == COMPONENT_TYPE_POSITIONABLE &&
+          registry->any_of<Positionable>(target)) {
+        const auto& positionable = registry->get<Positionable>(target);
+        component->set_type(COMPONENT_TYPE_POSITIONABLE);
+        auto* data = component->mutable_positionable();
+        data->set_entityid(batchedRequest.request.entityid());
+        *data->mutable_position() = toProtoVec3(positionable.pos);
+        *data->mutable_rotation() = toProtoVec3(positionable.rotate);
+        data->set_scale(positionable.scale);
+        *data->mutable_origin() = toProtoVec3(positionable.origin);
         success = true;
-        ComponentType filter = COMPONENT_TYPE_UNSPECIFIED;
-        if (batchedRequest.request.has_listentities()) {
-          filter = batchedRequest.request.listentities().filter_type();
-        }
-        auto view = registry->view<Persistable>();
-        for (auto [entity, persistable] : view.each()) {
-          if (filter == COMPONENT_TYPE_POSITIONABLE &&
-              !registry->any_of<Positionable>(entity)) {
-            continue;
-          }
-          if (filter == COMPONENT_TYPE_MODEL &&
-              !registry->any_of<Model>(entity)) {
-            continue;
-          }
-          if (filter == COMPONENT_TYPE_LIGHT &&
-              !registry->any_of<Light>(entity)) {
-            continue;
-          }
-          const auto entityId = static_cast<int64_t>(entity);
-          response.add_entity_ids(entityId);
-          auto* info = response.add_entity_components();
-          info->set_entity_id(entityId);
-          if (registry->any_of<Positionable>(entity)) {
-            info->add_component_types(COMPONENT_TYPE_POSITIONABLE);
-          }
-          if (registry->any_of<Model>(entity)) {
-            info->add_component_types(COMPONENT_TYPE_MODEL);
-          }
-          if (registry->any_of<Light>(entity)) {
-            info->add_component_types(COMPONENT_TYPE_LIGHT);
-          }
-        }
+      } else if (type == COMPONENT_TYPE_MODEL &&
+                 registry->any_of<Model>(target)) {
+        const auto& model = registry->get<Model>(target);
+        component->set_type(COMPONENT_TYPE_MODEL);
+        auto* data = component->mutable_model();
+        data->set_entityid(batchedRequest.request.entityid());
+        data->set_model_path(model.path);
+        success = true;
+      } else if (type == COMPONENT_TYPE_LIGHT &&
+                 registry->any_of<Light>(target)) {
+        const auto& light = registry->get<Light>(target);
+        component->set_type(COMPONENT_TYPE_LIGHT);
+        auto* data = component->mutable_light();
+        data->set_entityid(batchedRequest.request.entityid());
+        *data->mutable_color() = toProtoVec3(light.color);
+        success = true;
       }
-      response.set_success(success);
-      fulfillPendingResponse(batchedRequest.id, response);
-      break;
     }
-    case GET_COMPONENT: {
-      ApiRequestResponse response;
-      response.set_requestid(batchedRequest.id);
-      bool success = false;
-      if (registry && batchedRequest.request.has_getcomponent()) {
-        entt::entity target =
-          static_cast<entt::entity>(batchedRequest.request.entityid());
-        if (registry->valid(target)) {
-          ComponentType type =
-            batchedRequest.request.getcomponent().component_type();
-          auto* component = response.mutable_component();
-          if (type == COMPONENT_TYPE_POSITIONABLE &&
-              registry->any_of<Positionable>(target)) {
-            const auto& positionable = registry->get<Positionable>(target);
-            component->set_type(COMPONENT_TYPE_POSITIONABLE);
-            auto* data = component->mutable_positionable();
-            data->set_entityid(batchedRequest.request.entityid());
-            *data->mutable_position() = toProtoVec3(positionable.pos);
-            *data->mutable_rotation() = toProtoVec3(positionable.rotate);
-            data->set_scale(positionable.scale);
-            *data->mutable_origin() = toProtoVec3(positionable.origin);
-            success = true;
-          } else if (type == COMPONENT_TYPE_MODEL &&
-                     registry->any_of<Model>(target)) {
-            const auto& model = registry->get<Model>(target);
-            component->set_type(COMPONENT_TYPE_MODEL);
-            auto* data = component->mutable_model();
-            data->set_entityid(batchedRequest.request.entityid());
-            data->set_model_path(model.path);
-            success = true;
-          } else if (type == COMPONENT_TYPE_LIGHT &&
-                     registry->any_of<Light>(target)) {
-            const auto& light = registry->get<Light>(target);
-            component->set_type(COMPONENT_TYPE_LIGHT);
-            auto* data = component->mutable_light();
-            data->set_entityid(batchedRequest.request.entityid());
-            *data->mutable_color() = toProtoVec3(light.color);
-            success = true;
-          }
-        }
-      }
-      response.set_success(success);
-      fulfillPendingResponse(batchedRequest.id, response);
-      break;
-    }
-    case ADD_COMPONENT: {
-      const auto& add = batchedRequest.request.addcomponent();
-      const auto& component = add.component();
-      if (!registry) {
+  }
+  response.set_success(success);
+  fulfillPendingResponse(batchedRequest.id, response);
+}
+
+void
+Api::handleAddComponent(const BatchedRequest& batchedRequest)
+{
+  const auto& add = batchedRequest.request.addcomponent();
+  const auto& component = add.component();
+  if (!registry) {
+    return;
+  }
+  entt::entity target =
+    static_cast<entt::entity>(batchedRequest.request.entityid());
+  if (!registry->valid(target)) {
+    return;
+  }
+  switch (component.type()) {
+    case COMPONENT_TYPE_POSITIONABLE: {
+      if (!component.has_positionable()) {
         break;
       }
-      entt::entity target =
-        static_cast<entt::entity>(batchedRequest.request.entityid());
-      if (!registry->valid(target)) {
-        break;
-      }
-      switch (component.type()) {
-        case COMPONENT_TYPE_POSITIONABLE: {
-          if (!component.has_positionable()) {
-            break;
-          }
-          const auto& data = component.positionable();
-          glm::vec3 pos = toVec3(data.position());
-          glm::vec3 origin =
-            data.has_origin() ? toVec3(data.origin()) : glm::vec3(0.0f);
-          glm::vec3 rotation = toVec3(data.rotation());
-          float scale = data.scale();
-          if (registry->any_of<Positionable>(target)) {
-            auto& positionable = registry->get<Positionable>(target);
-            positionable.pos = pos;
-            positionable.origin = origin;
-            positionable.rotate = rotation;
-            positionable.scale = scale;
-            positionable.damage();
-          } else {
-            registry->emplace<Positionable>(
-              target, pos, origin, rotation, scale);
-          }
-          break;
-        }
-        case COMPONENT_TYPE_MODEL: {
-          if (!component.has_model()) {
-            break;
-          }
-          const auto& data = component.model();
-          if (data.model_path().empty()) {
-            break;
-          }
-          if (registry->any_of<Model>(target)) {
-            registry->removePersistent<Model>(target);
-          }
-          registry->emplace<Model>(target, data.model_path());
-          break;
-        }
-        case COMPONENT_TYPE_LIGHT: {
-          if (!component.has_light()) {
-            break;
-          }
-          const auto& data = component.light();
-          glm::vec3 color = toVec3(data.color());
-          if (registry->any_of<Light>(target)) {
-            registry->get<Light>(target).color = color;
-          } else {
-            registry->emplace<Light>(target, color);
-          }
-          break;
-        }
-        default:
-          break;
+      const auto& data = component.positionable();
+      glm::vec3 pos = toVec3(data.position());
+      glm::vec3 origin =
+        data.has_origin() ? toVec3(data.origin()) : glm::vec3(0.0f);
+      glm::vec3 rotation = toVec3(data.rotation());
+      float scale = data.scale();
+      if (registry->any_of<Positionable>(target)) {
+        auto& positionable = registry->get<Positionable>(target);
+        positionable.pos = pos;
+        positionable.origin = origin;
+        positionable.rotate = rotation;
+        positionable.scale = scale;
+        positionable.damage();
+      } else {
+        registry->emplace<Positionable>(target, pos, origin, rotation, scale);
       }
       break;
     }
-    case DELETE_COMPONENT: {
-      const auto& del = batchedRequest.request.deletecomponent();
-      if (!registry) {
+    case COMPONENT_TYPE_MODEL: {
+      if (!component.has_model()) {
         break;
       }
-      entt::entity target =
-        static_cast<entt::entity>(batchedRequest.request.entityid());
-      if (!registry->valid(target)) {
+      const auto& data = component.model();
+      if (data.model_path().empty()) {
         break;
       }
-      switch (del.component_type()) {
-        case COMPONENT_TYPE_POSITIONABLE:
-          if (registry->any_of<Positionable>(target)) {
-            registry->removePersistent<Positionable>(target);
-          }
-          break;
-        case COMPONENT_TYPE_MODEL:
-          if (registry->any_of<Model>(target)) {
-            registry->removePersistent<Model>(target);
-          }
-          break;
-        case COMPONENT_TYPE_LIGHT:
-          if (registry->any_of<Light>(target)) {
-            registry->removePersistent<Light>(target);
-          }
-          break;
-        default:
-          break;
+      if (registry->any_of<Model>(target)) {
+        registry->removePersistent<Model>(target);
+      }
+      registry->emplace<Model>(target, data.model_path());
+      break;
+    }
+    case COMPONENT_TYPE_LIGHT: {
+      if (!component.has_light()) {
+        break;
+      }
+      const auto& data = component.light();
+      glm::vec3 color = toVec3(data.color());
+      if (registry->any_of<Light>(target)) {
+        registry->get<Light>(target).color = color;
+      } else {
+        registry->emplace<Light>(target, color);
       }
       break;
     }
-    case EDIT_COMPONENT: {
-      const auto& edit = batchedRequest.request.editcomponent();
-      const auto& component = edit.component();
-      if (!registry) {
-        break;
-      }
-      entt::entity target =
-        static_cast<entt::entity>(batchedRequest.request.entityid());
-      if (!registry->valid(target)) {
-        break;
-      }
-      switch (component.type()) {
-        case COMPONENT_TYPE_POSITIONABLE: {
-          if (!component.has_positionable() ||
-              !registry->any_of<Positionable>(target)) {
-            break;
-          }
-          const auto& data = component.positionable();
-          auto& positionable = registry->get<Positionable>(target);
-          positionable.pos = toVec3(data.position());
-          positionable.origin =
-            data.has_origin() ? toVec3(data.origin()) : glm::vec3(0.0f);
-          positionable.rotate = toVec3(data.rotation());
-          positionable.scale = data.scale();
-          positionable.damage();
-          break;
-        }
-        case COMPONENT_TYPE_MODEL: {
-          if (!component.has_model() || !registry->any_of<Model>(target)) {
-            break;
-          }
-          const auto& data = component.model();
-          if (data.model_path().empty()) {
-            break;
-          }
-          if (registry->any_of<Model>(target)) {
-            registry->removePersistent<Model>(target);
-          }
-          registry->emplace<Model>(target, data.model_path());
-          break;
-        }
-        case COMPONENT_TYPE_LIGHT: {
-          if (!component.has_light() || !registry->any_of<Light>(target)) {
-            break;
-          }
-          const auto& data = component.light();
-          registry->get<Light>(target).color = toVec3(data.color());
-          break;
-        }
-        default:
-          break;
+    default:
+      break;
+  }
+}
+
+void
+Api::handleDeleteComponent(const BatchedRequest& batchedRequest)
+{
+  const auto& del = batchedRequest.request.deletecomponent();
+  if (!registry) {
+    return;
+  }
+  entt::entity target =
+    static_cast<entt::entity>(batchedRequest.request.entityid());
+  if (!registry->valid(target)) {
+    return;
+  }
+  switch (del.component_type()) {
+    case COMPONENT_TYPE_POSITIONABLE:
+      if (registry->any_of<Positionable>(target)) {
+        registry->removePersistent<Positionable>(target);
       }
       break;
+    case COMPONENT_TYPE_MODEL:
+      if (registry->any_of<Model>(target)) {
+        registry->removePersistent<Model>(target);
+      }
+      break;
+    case COMPONENT_TYPE_LIGHT:
+      if (registry->any_of<Light>(target)) {
+        registry->removePersistent<Light>(target);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+void
+Api::handleEditComponent(const BatchedRequest& batchedRequest)
+{
+  const auto& edit = batchedRequest.request.editcomponent();
+  const auto& component = edit.component();
+  if (!registry) {
+    return;
+  }
+  entt::entity target =
+    static_cast<entt::entity>(batchedRequest.request.entityid());
+  if (!registry->valid(target)) {
+    return;
+  }
+  switch (component.type()) {
+    case COMPONENT_TYPE_POSITIONABLE: {
+      if (!component.has_positionable() ||
+          !registry->any_of<Positionable>(target)) {
+        break;
+      }
+      const auto& data = component.positionable();
+      auto& positionable = registry->get<Positionable>(target);
+      positionable.pos = toVec3(data.position());
+      positionable.origin =
+        data.has_origin() ? toVec3(data.origin()) : glm::vec3(0.0f);
+      positionable.rotate = toVec3(data.rotation());
+      positionable.scale = data.scale();
+      positionable.damage();
+      break;
     }
-    case STATUS: {
-      // STATUS requests are handled synchronously in poll().
+    case COMPONENT_TYPE_MODEL: {
+      if (!component.has_model() || !registry->any_of<Model>(target)) {
+        break;
+      }
+      const auto& data = component.model();
+      if (data.model_path().empty()) {
+        break;
+      }
+      if (registry->any_of<Model>(target)) {
+        registry->removePersistent<Model>(target);
+      }
+      registry->emplace<Model>(target, data.model_path());
+      break;
+    }
+    case COMPONENT_TYPE_LIGHT: {
+      if (!component.has_light() || !registry->any_of<Light>(target)) {
+        break;
+      }
+      const auto& data = component.light();
+      registry->get<Light>(target).color = toVec3(data.color());
       break;
     }
     default:
@@ -928,10 +1039,6 @@ Api::registerClearArea(const glm::vec3& min,
                  upper.y,
                  upper.z);
   }
-  std::cout << "[API] Registered clear area id=" << actionId
-            << " min=(" << lower.x << ", " << lower.y << ", " << lower.z
-            << ") max=(" << upper.x << ", " << upper.y << ", " << upper.z
-            << ")" << std::endl;
   return actionId;
 }
 
@@ -949,7 +1056,6 @@ Api::confirmClearArea(int64_t actionId)
   if (logger) {
     logger->info("Confirmed clear area {}", actionId);
   }
-  std::cout << "[API] Confirmed clear area id=" << actionId << std::endl;
   pendingClearAreas.erase(it);
   return true;
 }

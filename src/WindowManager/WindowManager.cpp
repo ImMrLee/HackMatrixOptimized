@@ -9,6 +9,7 @@
 #include "model.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <chrono>
 #include <cerrno>
@@ -400,6 +401,9 @@ WindowManager::focusApp(entt::entity appEntity)
   pendingFocusedApp = std::nullopt;
   cursorInputFocusedApp = std::nullopt;
   currentlyFocusedApp = appEntity;
+  if (logger) {
+    logger->debug("focusApp ent={}", (int)entt::to_integral(appEntity));
+  }
   // Clear any stuck movement when compositor focus moves to a client.
   if (controls) {
     controls->clearMovementInput();
@@ -483,6 +487,80 @@ void WindowManager::unfocusApp() {
   WL_WM_LOG("WM: unfocusApp ent=%d\n", (int)entt::to_integral(ent));
 }
 
+void
+WindowManager::moveFocusedApp(glm::vec3 delta)
+{
+  if (!registry || !currentlyFocusedApp.has_value()) {
+    return;
+  }
+  entt::entity ent = currentlyFocusedApp.value();
+  if (!registry->valid(ent) || !registry->all_of<Positionable>(ent)) {
+    return;
+  }
+  auto& positionable = registry->get<Positionable>(ent);
+  positionable.pos += delta;
+  positionable.damage();
+  if (logger) {
+    logger->debug("moveFocusedApp ent={} delta=({}, {}, {})",
+                  (int)entt::to_integral(ent),
+                  delta.x,
+                  delta.y,
+                  delta.z);
+  }
+  WL_WM_LOG("WM: moveFocusedApp ent=%d delta=(%.3f,%.3f,%.3f)\n",
+            (int)entt::to_integral(ent),
+            delta.x,
+            delta.y,
+            delta.z);
+}
+
+void
+WindowManager::resizeFocusedApp(float factor)
+{
+  if (!registry || !currentlyFocusedApp.has_value() || factor <= 0.0f) {
+    return;
+  }
+  entt::entity ent = currentlyFocusedApp.value();
+  if (!registry->valid(ent)) {
+    return;
+  }
+  constexpr int kMinSize = 100;
+  int newWidth = 0;
+  int newHeight = 0;
+
+  if (registry->all_of<WaylandApp::Component>(ent)) {
+    auto& component = registry->get<WaylandApp::Component>(ent);
+    if (component.app) {
+      newWidth = std::max(
+        kMinSize,
+        static_cast<int>(std::lround(component.app->getWidth() * factor)));
+      newHeight = std::max(
+        kMinSize,
+        static_cast<int>(std::lround(component.app->getHeight() * factor)));
+      component.app->requestSize(newWidth, newHeight);
+      component.app->resize(newWidth, newHeight);
+    }
+  }
+  if (registry->all_of<Bootable>(ent)) {
+    auto& bootable = registry->get<Bootable>(ent);
+    newWidth = std::max(
+      kMinSize, static_cast<int>(std::lround(bootable.getWidth() * factor)));
+    newHeight = std::max(
+      kMinSize, static_cast<int>(std::lround(bootable.getHeight() * factor)));
+    systems::resizeBootable(registry, ent, newWidth, newHeight);
+  }
+  if (logger) {
+    logger->debug("resizeFocusedApp ent={} -> {}x{}",
+                  (int)entt::to_integral(ent),
+                  newWidth,
+                  newHeight);
+  }
+  WL_WM_LOG("WM: resizeFocusedApp ent=%d -> %dx%d\n",
+            (int)entt::to_integral(ent),
+            newWidth,
+            newHeight);
+}
+
 
 bool
 WindowManager::computeFocusedSpawn(entt::entity newApp, glm::vec3& pos, glm::vec3& rot) const
@@ -562,7 +640,7 @@ void WindowManager::setupLogger() {
   }
   logger = make_shared<spdlog::logger>("wm", logSink);
   logger->set_level(spdlog::level::debug);
-  logger->flush_on(spdlog::level::info);
+  logger->flush_on(spdlog::level::debug);
   logger->debug("WindowManager()");
 }
 

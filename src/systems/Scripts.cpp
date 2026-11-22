@@ -14,6 +14,7 @@
 #include "components/Scriptable.h"
 #include "systems/Scripts.h"
 #include "entity.h"
+#include <spdlog/spdlog.h>
 
 extern char** environ;
 
@@ -212,7 +213,7 @@ editScript(std::shared_ptr<EntityRegistry> registry, entt::entity entity)
 
   auto& scriptable = registry->get<Scriptable>(entity);
   std::thread t([registry, entity, &scriptable]() -> void {
-    std::cout << "ext:" << scriptable.getExtension() << std::endl;
+    spdlog::debug("script ext: {}", scriptable.getExtension());
     auto scriptPath = getScriptPath(entity, scriptable);
 
     auto fstream = std::ofstream(scriptPath);

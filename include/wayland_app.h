@@ -148,4 +148,8 @@ private:
   void handle_commit(wlr_surface* surface);
   void handle_destroy();
   void update_height_scalar();
+  // appTexture() split: EGLImage teardown, zero-copy dmabuf import, CPU upload.
+  void destroyImportedImage();
+  bool tryImportDmabuf(wlr_buffer* buffer);
+  void uploadCpuFallback(wlr_buffer* buffer);
 };

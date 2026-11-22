@@ -32,6 +32,19 @@ namespace WindowManager {
 
     size_t numPositionableApps = 0;
 
+    // raycastApp() used to invert a 4x4 per entity per frame. The inverse only
+    // changes when the Positionable is damaged or the app's height scalar
+    // changes, so cache it per entity.
+    struct AppRaycastCache
+    {
+      glm::mat4 localToWorld{ 1.0f };
+      glm::mat4 worldToLocal{ 1.0f };
+      glm::mat4 modelMatrix{ 1.0f };
+      glm::mat4 heightScalar{ 1.0f };
+      bool valid = false;
+    };
+    std::unordered_map<entt::entity, AppRaycastCache> appRaycastCache;
+
     void initAppPositions();
 
   public:
