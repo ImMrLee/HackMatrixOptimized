@@ -241,14 +241,17 @@ cmake --build build -j"$(nproc)"
 ## Arch系编译为tar.zst
 
 ### 准备一个干净的打包目录
+```bash
 rm -rf /tmp/hm-pkg
 mkdir -p /tmp/hm-pkg
 cp distributions/arch/PKGBUILD \
    distributions/arch/HackMatrix.desktop \
    distributions/arch/matrix-script \
    /tmp/hm-pkg/
-
+```
+   
 ### 输出目录
+```bash
 mkdir -p "$HOME/HackMatrix-arch"
 
 cd /tmp/hm-pkg
@@ -257,12 +260,14 @@ HACKMATRIX_LOCAL_SOURCE=<project_dir> \
 PKGDEST="$HOME/HackMatrix-arch" \
 MAKEFLAGS="-j$(nproc)" \
 makepkg -f
+```
 产物会直接出现在：
 ~/HackMatrix-arch/hackmatrix-git-<版本>-x86_64.pkg.tar.zst
 
 #### 安装
-
+```bash
 sudo pacman -U "$HOME"/HackMatrix-arch/hackmatrix-git-*.pkg.tar.zst
+```
 
 几个注意点
 - 不要用 sudo makepkg，用当前用户跑，最后安装才用 sudo pacman -U。
