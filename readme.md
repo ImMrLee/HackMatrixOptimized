@@ -238,6 +238,42 @@ cmake --build build -j"$(nproc)"
 
 不要用 `sudo` 运行；它需要当前用户的 Wayland / DRM 权限。
 
+## Arch系编译为tar.zst
+
+### 准备一个干净的打包目录
+rm -rf /tmp/hm-pkg
+mkdir -p /tmp/hm-pkg
+cp distributions/arch/PKGBUILD \
+   distributions/arch/HackMatrix.desktop \
+   distributions/arch/matrix-script \
+   /tmp/hm-pkg/
+
+### 输出目录
+mkdir -p "$HOME/HackMatrix-arch"
+
+cd /tmp/hm-pkg
+
+HACKMATRIX_LOCAL_SOURCE=<project_dir> \
+PKGDEST="$HOME/HackMatrix-arch" \
+MAKEFLAGS="-j$(nproc)" \
+makepkg -f
+产物会直接出现在：
+~/HackMatrix-arch/hackmatrix-git-<版本>-x86_64.pkg.tar.zst
+
+#### 安装
+
+sudo pacman -U "$HOME"/HackMatrix-arch/hackmatrix-git-*.pkg.tar.zst
+
+几个注意点
+- 不要用 sudo makepkg，用当前用户跑，最后安装才用 sudo pacman -U。
+- HACKMATRIX_LOCAL_SOURCE 必须指向仓库根目录，不是 build/。
+- 想强制全量重编，加 -C：
+makepkg -f -C
+- 构建会重写 client_libs/python/hackMatrix/protos/api_pb2.py，如果不想让它出现在 git status 里：
+git checkout HEAD -- client_libs/python/hackMatrix/protos/api_pb2.py
+- 打包的是当前工作区，未提交的改动也会进包；版本号来自 git describe。
+- 包名固定是 hackmatrix-git，重复构建会覆盖/升级已安装的同名包。
+
 ### 常用选项
 
 | 选项 | 默认 | 说明 |

@@ -202,12 +202,37 @@ handle_new_layer_surface(wl_listener* listener, void* data)
       handle->configured = true;
       return;
     }
-    if (handle->registered) {
-      return;
-    }
     int w = surf->current.width;
     int h = surf->current.height;
     if (w <= 0 || h <= 0) {
+      return;
+    }
+    if (handle->registered) {
+      // Layer surfaces (e.g. wofi) often resize after the first configure.
+      // Keep the compositor-side screen rect in sync with the real surface so
+      // pointer hit-testing and rendering use the same position.
+      if (handle->server->registry) {
+        auto it = handle->server->surface_map.find(surf);
+        if (it != handle->server->surface_map.end() &&
+            handle->server->registry->valid(it->second)) {
+          auto* comp =
+            handle->server->registry->try_get<WaylandApp::Component>(it->second);
+          if (comp) {
+            auto pos = compute_layer_shell_position(
+              handle->server, handle->layer, w, h);
+            comp->screen_x = pos.first;
+            comp->screen_y = pos.second;
+            comp->screen_w =
+              handle->server->primary_output
+                ? handle->server->primary_output->width
+                : static_cast<int>(SCREEN_WIDTH);
+            comp->screen_h =
+              handle->server->primary_output
+                ? handle->server->primary_output->height
+                : static_cast<int>(SCREEN_HEIGHT);
+          }
+        }
+      }
       return;
     }
     auto pos = compute_layer_shell_position(handle->server, handle->layer, w, h);

@@ -293,13 +293,21 @@ map_pointer_to_surface(WlrServer* server, wlr_surface* surf)
   double surf_h = surf ? surf->current.height : 0;
 
   bool handledPopupCoords = false;
+  bool handledLayerCoords = false;
   // For popup/accessory surfaces, place the pointer relative to the parent's
   // top-left using the same math as renderWaylandPopup().
   if (server && surf && server->registry) {
     auto it = server->surface_map.find(surf);
     if (it != server->surface_map.end() && isValidWaylandAppComponent(server, it->second)) {
       auto& comp = server->registry->get<WaylandApp::Component>(it->second);
-      if (comp.accessory && isValidWaylandAppComponent(server, comp.parent)) {
+      if (comp.layer_shell) {
+        // Layer surfaces (wofi, panels, notifications) are positioned by their
+        // anchors/margins, not centered in the output. Use the same screen rect
+        // the renderer blits to.
+        sx -= comp.screen_x;
+        sy -= comp.screen_y;
+        handledLayerCoords = true;
+      } else if (comp.accessory && isValidWaylandAppComponent(server, comp.parent)) {
         auto& parentComp = server->registry->get<WaylandApp::Component>(comp.parent);
         if (parentComp.app) {
           int parentW = parentComp.app->getWidth();
@@ -318,8 +326,10 @@ map_pointer_to_surface(WlrServer* server, wlr_surface* surf)
     }
   }
   // Subtract the center offset so (0,0) maps to the surface top-left.
-  // Skip this for popups, which already derived screen-relative coords.
-  if (!handledPopupCoords && server && server->primary_output) {
+  // Skip this for popups and layer shells, which already derived
+  // screen-relative coords from their actual on-screen rectangles.
+  if (!handledPopupCoords && !handledLayerCoords && server &&
+      server->primary_output) {
     double out_w = server->primary_output->width;
     double out_h = server->primary_output->height;
     if (out_w > surf_w && surf_w > 0) {

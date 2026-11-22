@@ -313,6 +313,30 @@ Renderer::initCursorResources()
   int baseY = kCursorSize - 2;
   draw_branch(baseX, baseY, -glm::half_pi<float>(), static_cast<float>(kCursorSize) * 0.3f, 7);
 
+  // Use the top of the drawn tree as the hotspot so the cursor is aimed with
+  // its tip/top rather than its base. Prefer the first painted pixel in the
+  // centre column; fall back to the topmost painted row for other art.
+  int topRow = kCursorSize;
+  for (int y = 0; y < kCursorSize; ++y) {
+    if (pixels[y * kCursorSize + kCursorSize / 2] != 0) {
+      topRow = y;
+      break;
+    }
+  }
+  if (topRow == kCursorSize) {
+    for (int y = 0; y < kCursorSize && topRow == kCursorSize; ++y) {
+      for (int x = 0; x < kCursorSize; ++x) {
+        if (pixels[y * kCursorSize + x] != 0) {
+          topRow = y;
+          break;
+        }
+      }
+    }
+  }
+  if (topRow < kCursorSize) {
+    cursorHotspotYRatio = static_cast<float>(topRow) / kCursorSize;
+  }
+
   glGenTextures(1, &cursorTexture);
   glBindTexture(GL_TEXTURE_2D, cursorTexture);
   glTexImage2D(GL_TEXTURE_2D,
@@ -550,10 +574,10 @@ Renderer::renderSoftwareCursor(float xPixels, float yPixels, float sizePixels)
   // Center the compositor-owned cursor quad on the pointer hotspot so the
   // drawn cursor matches hit-testing coordinates.
   glm::vec2 mapped = mapCursorToScreen(xPixels, yPixels);
-  // Match the cursor art: the visible "tip" is at the bottom-center of the
-  // generated tree, not at the texture center.
+  // Aim with the top of the generated tree (the click point should be the
+  // visible top edge, not the trunk at the bottom).
   float hotspotX = sizePixels * 0.5f;
-  float hotspotY = sizePixels * (62.0f / 64.0f);
+  float hotspotY = sizePixels * cursorHotspotYRatio;
   float drawX = mapped.x - hotspotX;
   float drawY = mapped.y - hotspotY;
   float yFlipped = SCREEN_HEIGHT - drawY - sizePixels;

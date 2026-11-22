@@ -49,6 +49,7 @@ class Renderer
   GlVertexArray CURSOR_VAO;
   unsigned int cursorTexture = 0;
   bool cursorInitialized = false;
+  float cursorHotspotYRatio = 62.0f / 64.0f;
 
   GlBuffer LINE_VBO;
   GlBuffer LINE_INSTANCE;
