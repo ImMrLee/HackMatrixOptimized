@@ -85,6 +85,16 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-23：**中文输入（fcitx5 / text-input-v3 + input-method-v2）** 已实现：
+  - compositor 新增 `zwp_text_input_manager_v3`、`zwp_input_method_manager_v2`、`zwp_virtual_keyboard_manager_v1` 三个 global；之前完全没有 IME 协议，fcitx5 即使启动也无法绑定。
+  - 新增 `ImeRelay`（`src/wayland/ime.cpp`）：焦点 enter/leave、文本输入 enable/commit/disable、输入法 commit → `preedit/commit/delete/done`、键盘 grab 转发、候选窗口 popup surface。
+  - 候选窗口用 ImGui overlay 绘制（`ImeRelay::renderOverlay`），按指针位置显示；无 GUI（`HACKMATRIX_ENABLE_GUI=0`）时只提交文本、不显示候选框。
+  - **关键修复**：IME commit 后立即 `wl_display_flush_clients`；否则事件留在 compositor 发送缓冲里，客户端收不到。
+  - 无头 seat 新增虚拟键盘（`create_virtual_keyboard`），使 seat 始终有 keymap，合成注入与 IME grab 在 headless 下也能工作。
+  - `KEY_REPLAY` 现在会按 seat keymap 把 keysym 映射成 keycode 注入到焦点客户端（ASCII），修复了 F1 一直只能触发 WM 热键、不能向应用输入文本的限制。
+  - **实测**：fcitx5 5.1.23 + pinyin，自写 text-input-v3 测试客户端收到 `commit_string("你好")`（Release 与 ASan 均通过）；候选 popup 读到 27x34/294x34/351x34 帧；ASan 修复了 popup 析构时把 `Popup*` 当 `ImeRelay*` 的堆越界。
+  - **限制**：ImGui 面板本身不是 Wayland 文本输入客户端，仍只能输入 ASCII；XWayland 应用需 `XMODIFIERS=@im=fcitx`；fcitx5 需在 HackMatrix 的 Wayland 会话内运行（宿主已有实例时用 `dbus-run-session` 隔离）。详见 `docs/BUILDING.md` 的 “Chinese input”。
+
 - 2026-11-23：**稳定性与实际体验修复（第一批）**：
   - **连接生命周期**：`Client` 改为 `Connecting / Connected / Disconnecting / Disconnected` 状态机，`connect()` 不再阻塞渲染线程 5 秒；超时、服务器关闭、主动断开都有明确状态与错误文案。`disconnect()` 无条件清理 peer/host，`sendPlayer`/`poll` 同时校验 state、peer、client，修复断线后再操作导致的空指针。
   - **WebGui 线程安全**：`~WebGui` 现在会 `app.stop()` 并 `join` Crow 线程；HTTP 的 connect 请求改为写入 `Engine` 命令队列，由渲染线程执行 ENet/GL 清理；不再跨线程 `registerClient`。

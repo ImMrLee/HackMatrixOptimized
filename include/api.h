@@ -1,6 +1,7 @@
 #ifndef __API_H__
 #define __API_H__
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -103,6 +104,8 @@ class Api
   World* world = nullptr;
   // F14a: provider returning the current multiplayer client (render thread).
   std::function<std::shared_ptr<MultiPlayer::Client>()> clientProvider_;
+  // Optional sink used by KEY_REPLAY to type into the focused Wayland client.
+  std::function<void(std::uint32_t, bool)> keyInjector_;
 
   zmq::context_t context;
   CommandServer* commandServer;
@@ -172,6 +175,11 @@ public:
     std::function<std::shared_ptr<MultiPlayer::Client>()> provider)
   {
     clientProvider_ = std::move(provider);
+  }
+  // KEY_REPLAY also reaches the focused Wayland client (not just WM hotkeys).
+  void setKeyInjector(std::function<void(std::uint32_t, bool)> injector)
+  {
+    keyInjector_ = std::move(injector);
   }
   ~Api();
   void poll();

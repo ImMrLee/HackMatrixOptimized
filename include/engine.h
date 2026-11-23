@@ -13,6 +13,8 @@
 #include "MultiPlayer/WebGui.h"
 #endif
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <spdlog/common.h>
@@ -72,6 +74,9 @@ class Engine
   std::vector<PendingMultiplayerCommand> multiplayerCommands_;
   std::string multiplayerError_;
   void drainMultiplayerCommands();
+  // Drawn inside EngineGui's active ImGui frame (IME candidate window, ...).
+  std::function<void()> imguiOverlay_;
+  std::function<void(std::uint32_t, bool)> keyInjector_;
 
 public:
   Engine(char** envp, EngineOptions options = {});
@@ -99,4 +104,18 @@ public:
   void updateImGuiKey(xkb_keysym_t sym, bool pressed);
   void setImguiWantsMouse(bool wants) { imguiMouseCapture = wants; }
   bool imguiWantsMouse() const { return imguiMouseCapture; }
+  void setImguiOverlay(std::function<void()> overlay)
+  {
+    imguiOverlay_ = std::move(overlay);
+  }
+  void setKeyInjector(std::function<void(std::uint32_t, bool)> injector)
+  {
+    keyInjector_ = std::move(injector);
+  }
+  void renderImguiOverlays()
+  {
+    if (imguiOverlay_) {
+      imguiOverlay_();
+    }
+  }
 };

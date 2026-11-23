@@ -133,6 +133,7 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
   }
   ImGui::End();
   engine->setImguiWantsMouse(ImGui::GetIO().WantCaptureMouse);
+  engine->renderImguiOverlays();
   ImGui::Render();
 
   ImDrawData* drawData = ImGui::GetDrawData();

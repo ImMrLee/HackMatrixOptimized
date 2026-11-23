@@ -1,6 +1,7 @@
 #define WLR_USE_UNSTABLE 1
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -8,6 +9,7 @@
 #include <memory>
 #include <utility>
 #include <EGL/egl.h>
+#include <xkbcommon/xkbcommon.h>
 #include <wayland-server-core.h>
 
 // wlroots is a C library: include its headers with C linkage.
@@ -44,8 +46,10 @@ extern "C" {
 #include "controls.h"
 #include "engine.h"
 #include "screen.h"
+#include "time_utils.h"
 #include "wayland/pointer.h"
 #include "wayland/wlr_compositor.h"
+#include "wayland/ime.h"
 #include "wlr_internal.h"
 
 namespace {
@@ -311,6 +315,54 @@ handle_output_frame(wl_listener* listener, void* data)
     }
     options.invertYAxis = true;
     server->engine = std::make_unique<Engine>(server->envp, options);
+    if (server->engine) {
+      server->engine->setImguiOverlay([server]() {
+        if (server->ime) {
+          server->ime->renderOverlay();
+        }
+      });
+      // KEY_REPLAY / remote control typing: map a keysym back to a keycode on
+      // the active keymap and deliver it through the seat (and IME grab).
+      server->engine->setKeyInjector(
+        [server](std::uint32_t sym, bool pressed) {
+          if (server->seat == nullptr) {
+            return;
+          }
+          auto* keyboard = wlr_seat_get_keyboard(server->seat);
+          if (keyboard == nullptr || keyboard->keymap == nullptr) {
+            return;
+          }
+          std::uint32_t keycode = 0;
+          for (std::uint32_t k = 8; k < 256; ++k) {
+            const xkb_keysym_t* syms = nullptr;
+            if (xkb_keymap_key_get_syms_by_level(
+                  keyboard->keymap, k, 0, 0, &syms) > 0 &&
+                syms[0] == static_cast<xkb_keysym_t>(sym)) {
+              keycode = k;
+              break;
+            }
+            if (xkb_keymap_key_get_syms_by_level(
+                  keyboard->keymap, k, 1, 0, &syms) > 0 &&
+                syms[0] == static_cast<xkb_keysym_t>(sym)) {
+              keycode = k;
+              break;
+            }
+          }
+          if (keycode == 0) {
+            return;
+          }
+          // xkb keycodes are evdev + 8; the seat expects the raw evdev code.
+          wlr_seat_keyboard_notify_key(
+            server->seat,
+            static_cast<uint32_t>(
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count()),
+            keycode - 8,
+            pressed ? WL_KEYBOARD_KEY_STATE_PRESSED
+                    : WL_KEYBOARD_KEY_STATE_RELEASED);
+        });
+    }
     // Surface API quit handling through wl_display so tests can terminate
     // cleanly.
     if (server->engine) {

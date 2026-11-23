@@ -24,6 +24,8 @@ extern "C" {
 #include "components/Bootable.h"
 #include "input_activity.h"
 #include "time_utils.h"
+#include "wayland/wlr_compositor.h"
+#include "wayland/ime.h"
 #include <cstdlib>
 #ifndef EGL_EGLEXT_PROTOTYPES
 #define EGL_EGLEXT_PROTOTYPES
@@ -88,6 +90,16 @@ ensureEglImageFns()
   if (!gEglDestroyImageKHR) {
     gEglDestroyImageKHR = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(
       eglGetProcAddress("eglDestroyImageKHR"));
+  }
+}
+
+static void
+notifyImeFocus(wlr_seat* seat, wlr_surface* surface)
+{
+  auto* server =
+    seat != nullptr ? static_cast<WlrServer*>(seat->data) : nullptr;
+  if (server != nullptr && server->ime) {
+    server->ime->setFocus(surface);
   }
 }
 
@@ -201,6 +213,7 @@ void WaylandApp::unfocus() {
       wlr_xwayland_surface_activate(xwayland_surface, false);
     }
     wlr_seat_keyboard_notify_clear_focus(seat);
+    notifyImeFocus(seat, nullptr);
     wlr_seat_pointer_notify_clear_focus(seat);
     update_pointer_constraint(static_cast<WlrServer*>(seat ? seat->data : nullptr), nullptr);
 }
@@ -221,6 +234,7 @@ WaylandApp::handle_destroy()
     }
     if (seat->keyboard_state.focused_surface == seat_surface) {
       wlr_seat_keyboard_notify_clear_focus(seat);
+      notifyImeFocus(seat, nullptr);
     }
   }
   seat_surface = nullptr;
@@ -302,6 +316,7 @@ WaylandApp::takeInputFocus()
         seat, seat_surface, kbd->keycodes, kbd->num_keycodes, &kbd->modifiers);
       wlr_seat_keyboard_notify_modifiers(seat, &kbd->modifiers);
     }
+    notifyImeFocus(seat, seat_surface);
     // Ensure pointer focus follows the focused app so pointer events are delivered.
     wlr_seat_pointer_notify_enter(seat, seat_surface, 0, 0);
     auto now_ms = static_cast<uint32_t>(
@@ -424,6 +439,7 @@ WaylandApp::injectKey(std::uint32_t keycode, bool pressed)
     wlr_seat_keyboard_notify_enter(
       seat, seat_surface, nullptr, 0, &modifiers);
   }
+  notifyImeFocus(seat, seat_surface);
   wlr_seat_keyboard_notify_key(
     seat,
     input_time_msec(),

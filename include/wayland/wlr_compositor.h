@@ -43,6 +43,11 @@ struct wlr_xwayland_surface;
 struct wlr_relative_pointer_manager_v1;
 struct wlr_pointer_constraints_v1;
 struct wlr_pointer_constraint_v1;
+struct wlr_text_input_manager_v3;
+struct wlr_input_method_manager_v2;
+struct wlr_virtual_keyboard_manager_v1;
+
+class ImeRelay;
 
 enum class HotkeyModifier { Super, Alt };
 
@@ -216,6 +221,10 @@ struct WlrServer {
   wlr_relative_pointer_manager_v1* relative_pointer_manager = nullptr;
   wlr_pointer_constraints_v1* pointer_constraints = nullptr;
   wlr_pointer_constraint_v1* active_pointer_constraint = nullptr;
+  wlr_text_input_manager_v3* text_input_manager = nullptr;
+  wlr_input_method_manager_v2* input_method_manager = nullptr;
+  wlr_virtual_keyboard_manager_v1* virtual_keyboard_manager = nullptr;
+  std::unique_ptr<ImeRelay> ime;
   wlr_output* primary_output = nullptr;
   wlr_input_device* last_keyboard_device = nullptr;
   wlr_input_device* last_pointer_device = nullptr;

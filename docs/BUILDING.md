@@ -127,6 +127,46 @@ Wayland pointer handlers; when the overlay wants the mouse, clicks are consumed
 so they do not also reach game controls or clients. Keyboard text input is not
 forwarded to ImGui yet, so text fields are read-only for now.
 
+## Chinese input (fcitx5)
+
+HackMatrix advertises `zwp_text_input_manager_v3`,
+`zwp_input_method_manager_v2`, and `zwp_virtual_keyboard_manager_v1`, so fcitx5
+can type into native Wayland clients.
+
+1. If fcitx5 already runs on the host, start HackMatrix in a private D-Bus
+   session (a second fcitx5 instance on the same bus exits immediately):
+
+   ```bash
+   dbus-run-session -- ./launch --headless
+   ```
+
+2. Inside that session, start and activate fcitx5 (e.g. from a HackMatrix
+   terminal):
+
+   ```bash
+   fcitx5 -d
+   fcitx5-remote -o
+   fcitx5-remote -s pinyin
+   ```
+
+3. Client environment:
+   - GTK3/GTK4 on Wayland: no extra variable (uses text-input-v3). If the host
+     sets `GTK_IM_MODULE=fcitx`, either keep it (needs `fcitx5-gtk`) or set
+     `GTK_IM_MODULE=wayland`.
+   - Qt 6: `QT_IM_MODULE=wayland` (text-input-v3) or `QT_IM_MODULE=fcitx`.
+   - XWayland apps: `XMODIFIERS=@im=fcitx` (fcitx5's XIM addon).
+
+The candidate window is drawn by the ImGui overlay near the pointer. ImGui
+panels themselves are not Wayland text-input clients, so Entity Editor /
+Multiplayer text fields remain ASCII-only.
+
+Notes:
+- Only clients implementing `zwp_text_input_v3` receive IME text.
+- `KEY_REPLAY` now also injects keys into the focused client (ASCII keysyms via
+  the seat keymap); it is intended for tests/remote control, not a full IME.
+- The compositor flushes text-input commits immediately; without that, some
+  clients never see the committed string (this was the original bug).
+
 ## Tooling
 
 - `compile_commands.json` is generated into the build directory by CMake; a

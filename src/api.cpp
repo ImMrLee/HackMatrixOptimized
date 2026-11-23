@@ -679,6 +679,11 @@ Api::handleKeyReplay(const BatchedRequest& batchedRequest)
     controls->scheduleKeySym(sym, true, modifierHeld, shiftHeld, at);
     controls->scheduleKeySym(sym, false, modifierHeld, shiftHeld,
                              at + kHoldSeconds);
+    if (keyInjector_) {
+      // Also deliver to the focused Wayland client (and the IME keyboard grab).
+      keyInjector_(static_cast<std::uint32_t>(sym), true);
+      keyInjector_(static_cast<std::uint32_t>(sym), false);
+    }
     at += kHoldSeconds + static_cast<double>(entry.delay_ms()) / 1000.0;
   }
 }

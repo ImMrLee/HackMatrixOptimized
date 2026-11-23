@@ -7,8 +7,14 @@ extern "C" {
 
 #include "wayland/keyboard.h"
 #include "wayland/wlr_compositor.h"
+#include "wayland/ime.h"
 #include "input_activity.h"
 #include "time_utils.h"
+
+extern "C" {
+#include <wlr/interfaces/wlr_keyboard.h>
+}
+#include <xkbcommon/xkbcommon.h>
 
 
 
@@ -162,6 +168,35 @@ handle_new_keyboard(WlrServer* server, wlr_input_device* device)
         keyboard->keycodes,
         keyboard->num_keycodes,
         &keyboard->modifiers);
+      if (server->ime) {
+        server->ime->setFocus(server->seat->keyboard_state.focused_surface);
+      }
     }
   }
+}
+
+void
+create_virtual_keyboard(WlrServer* server)
+{
+  if (server == nullptr || server->seat == nullptr ||
+      server->virtual_keyboard != nullptr) {
+    return;
+  }
+  static const wlr_keyboard_impl impl = { "hackmatrix-virtual", nullptr };
+  auto* keyboard = new wlr_keyboard();
+  wlr_keyboard_init(keyboard, &impl, "hackmatrix-virtual");
+
+  xkb_context* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+  xkb_keymap* keymap =
+    xkb_keymap_new_from_names(context, nullptr, XKB_KEYMAP_COMPILE_NO_FLAGS);
+  if (keymap != nullptr) {
+    wlr_keyboard_set_keymap(keyboard, keymap);
+    xkb_keymap_unref(keymap);
+  }
+  xkb_context_unref(context);
+  wlr_keyboard_set_repeat_info(keyboard, 25, 600);
+
+  server->virtual_keyboard = keyboard;
+  wlr_seat_set_keyboard(server->seat, keyboard);
+  wlr_seat_keyboard_notify_modifiers(server->seat, &keyboard->modifiers);
 }

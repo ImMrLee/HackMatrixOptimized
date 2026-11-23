@@ -46,6 +46,8 @@ extern "C" {
 #include <xdg-shell-client-protocol.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
+#include <wlr/types/wlr_text_input_v3.h>
+#include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/util/log.h>
 #define class class_
 #include <wlr/xwayland.h>
@@ -70,6 +72,7 @@ extern "C" {
 #include "wayland/wlr_compositor.h"
 #include "wayland/pointer.h"
 #include "wayland/keyboard.h"
+#include "wayland/ime.h"
 #include "wlr_internal.h"
 
 #ifdef WLROOTS_DEBUG_LOGS
@@ -381,6 +384,9 @@ WlrServer::create_seat() {
   if (seat) {
     seat->data = this;
     wlr_seat_set_capabilities(seat, WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
+    // Headless backends have no physical keyboard; synthetic injection and IME
+    // grabs still need a keymap on the seat.
+    create_virtual_keyboard(this);
 
     // copy/paste
     request_set_selection.notify = handle_set_selection;
@@ -435,6 +441,17 @@ WlrServer::init_protocols()
   pointer_constraints = wlr_pointer_constraints_v1_create(display);
   if (!pointer_constraints) {
     wlr_log(WLR_ERROR, "Failed to create pointer-constraints manager");
+    return false;
+  }
+
+  // Input method support: GTK/Qt/terminal clients bind text-input-v3, fcitx5
+  // binds input-method-v2. Without these globals, no IME can attach to the
+  // compositor (even a manually started fcitx5 has nothing to talk to).
+  text_input_manager = wlr_text_input_manager_v3_create(display);
+  input_method_manager = wlr_input_method_manager_v2_create(display);
+  virtual_keyboard_manager = wlr_virtual_keyboard_manager_v1_create(display);
+  if (!text_input_manager || !input_method_manager) {
+    wlr_log(WLR_ERROR, "Failed to create input method managers");
     return false;
   }
   
@@ -501,6 +518,11 @@ bool WlrServer::init_resources()
       !create_allocator() || !init_protocols() || !create_seat()) {
     return false;
   }
+  if (seat != nullptr && text_input_manager != nullptr &&
+      input_method_manager != nullptr) {
+    ime = std::make_unique<ImeRelay>(
+      this, seat, text_input_manager, input_method_manager);
+  }
   register_listeners();
   return true;
 }
@@ -532,6 +554,7 @@ WlrServer::~WlrServer()
   if (engine) {
     engine.reset();
   }
+  ime.reset();
   if (seat) {
     remove_listener(request_set_cursor);
     remove_listener(request_set_selection);

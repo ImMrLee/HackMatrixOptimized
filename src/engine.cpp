@@ -202,6 +202,11 @@ Engine::initializeMemberObjs()
   api = std::make_unique<Api>(
     apiAddress, registry, controls.get(), renderer.get(), world.get(), wm);
   api->setClientProvider([this]() { return client; });
+  api->setKeyInjector([this](std::uint32_t sym, bool pressed) {
+    if (keyInjector_) {
+      keyInjector_(sym, pressed);
+    }
+  });
   if (wm) {
     wm->registerControls(controls.get());
   }
