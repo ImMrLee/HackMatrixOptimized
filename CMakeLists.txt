@@ -897,6 +897,7 @@ if(MATRIX_BUILD_TESTS)
       tests/sceneFingerprint.cpp
       tests/multiplayerClient.cpp
       tests/windowShareProtocol.cpp
+      tests/worldSyncProtocol.cpp
       tests/webrtcProtocol.cpp
       tests/configPersistence.cpp
       tests/videoCodec.cpp

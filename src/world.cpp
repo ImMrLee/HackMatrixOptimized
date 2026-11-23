@@ -742,6 +742,80 @@ World::clearApiVoxelsInBox(const glm::vec3& min, const glm::vec3& max)
   }
 }
 
+vector<World::ApiVoxel>
+World::apiVoxelSnapshot() const
+{
+  vector<ApiVoxel> out;
+  if (dynamicObjects == NULL) {
+    return out;
+  }
+  out.reserve(apiDynamicObjectIds.size());
+  for (int id : apiDynamicObjectIds) {
+    auto obj = dynamic_pointer_cast<DynamicCube>(
+      dynamicObjects->getObjectById(id));
+    if (obj == NULL) {
+      continue;
+    }
+    ApiVoxel v;
+    v.position = obj->getPosition();
+    v.edge = obj->getSize().x;
+    v.color = obj->getColor();
+    out.push_back(v);
+  }
+  return out;
+}
+
+vector<glm::vec3>
+World::apiVoxelPositions(const vector<int64_t>& ids) const
+{
+  vector<glm::vec3> out;
+  if (dynamicObjects == NULL) {
+    return out;
+  }
+  out.reserve(ids.size());
+  for (int64_t id : ids) {
+    const int intId = static_cast<int>(id);
+    if (!apiDynamicObjectIds.contains(intId)) {
+      continue;
+    }
+    auto obj = dynamicObjects->getObjectById(intId);
+    if (obj != NULL) {
+      out.push_back(obj->getPosition());
+    }
+  }
+  return out;
+}
+
+void
+World::clearApiVoxelsAtPositions(const vector<glm::vec3>& positions)
+{
+  if (dynamicObjects == NULL || positions.empty() ||
+      apiDynamicObjectIds.empty()) {
+    return;
+  }
+  const float EPS = 0.0001f;
+  vector<int> idsToRemove;
+  for (int id : apiDynamicObjectIds) {
+    auto obj = dynamicObjects->getObjectById(id);
+    if (obj == NULL) {
+      continue;
+    }
+    const auto pos = obj->getPosition();
+    for (const auto& target : positions) {
+      if (glm::length(pos - target) <= EPS) {
+        idsToRemove.push_back(id);
+        break;
+      }
+    }
+  }
+  for (int id : idsToRemove) {
+    apiDynamicObjectIds.erase(id);
+  }
+  if (!idsToRemove.empty()) {
+    dynamicObjects->queueRemoveObjectsById(idsToRemove);
+  }
+}
+
 void
 World::clearDynamicObjectsInBox(const glm::vec3& min, const glm::vec3& max)
 {

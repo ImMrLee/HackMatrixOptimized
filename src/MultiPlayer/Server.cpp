@@ -1,5 +1,6 @@
 #include "MultiPlayer/Server.h"
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <glm/glm.hpp>
@@ -8,6 +9,7 @@
 
 #include "webrtc_protocol.h"
 #include "window_share_protocol.h"
+#include "world_sync_protocol.h"
 #include <unistd.h>
 #include <spdlog/spdlog.h>
 
@@ -116,6 +118,7 @@ Server::PollLoop()
   std::vector<uint32_t> clients;
   std::unordered_map<uint32_t, SceneFingerprint> peerScenes;
   std::unordered_map<uint32_t, ENetPeer*> peers;
+  std::unordered_map<ENetPeer*, uint32_t> peerIDs;
   std::unordered_map<uint64_t, CachedShare> cachedShares;
 
   auto shareKey = [](uint32_t owner, uint32_t shareId) -> uint64_t {
@@ -150,13 +153,50 @@ Server::PollLoop()
     enet_host_flush(server);
   };
 
+  // F14a: the first connected client is the world authority. On its departure
+  // the next remaining client takes over so world sync keeps a single source.
+  uint32_t authorityID = 0;
+  auto broadcastAuthority = [&]() {
+    const auto bytes = encodeWorldAuthority(authorityID);
+    ENetPacket* packet = enet_packet_create(
+      bytes.data(), bytes.size(), ENET_PACKET_FLAG_RELIABLE);
+    if (packet != nullptr) {
+      enet_host_broadcast(server, WORLD_SYNC, packet);
+      enet_host_flush(server);
+    }
+  };
+
   ENetEvent event;
+  auto lastPing = std::chrono::steady_clock::now();
   while (isRunning) {
+    // ENet only arms its peer timeout while reliable commands are in flight.
+    // Ping every 2 s so a crashed client is detected instead of lingering as a
+    // phantom player (and, for F14a, as a phantom world authority).
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastPing >= std::chrono::seconds(2)) {
+      lastPing = now;
+      spdlog::debug("MultiPlayer: pinging {} peer(s)", peers.size());
+      for (auto& [id, peer] : peers) {
+        (void)id;
+        if (peer != nullptr) {
+          enet_peer_ping(peer);
+        }
+      }
+      enet_host_flush(server);
+    }
     if (enet_host_service(server, &event, 0) > 0) {
       switch (event.type) {
         case ENET_EVENT_TYPE_CONNECT: {
           enet_host_flush(server);
           uint32_t playerId = event.peer->connectID;
+          // ENet resets connectID to 0 before dispatching DISCONNECT, so keep
+          // our own copy for cleanup and authority re-election.
+          peerIDs[event.peer] = playerId;
+          event.peer->data =
+            reinterpret_cast<void*>(static_cast<uintptr_t>(playerId));
+          // Detect a crashed client in ~5-15 s instead of ENet's 30 s default,
+          // so phantom players / world authorities do not linger.
+          enet_peer_timeout(event.peer, 10, 5000, 15000);
 
           // Send the newcomer every scene fingerprint we already know about.
           // Its own fingerprint will arrive on channel 3 and is then relayed
@@ -183,6 +223,12 @@ Server::PollLoop()
           enet_host_flush(server);
           clients.push_back(playerId);
           peers[playerId] = event.peer;
+
+          // Elect the world authority (first client) and inform everyone.
+          if (authorityID == 0) {
+            authorityID = playerId;
+          }
+          broadcastAuthority();
         } break;
         case ENET_EVENT_TYPE_RECEIVE:
           if (event.channelID == PLAYER_UPDATE) {
@@ -349,11 +395,52 @@ Server::PollLoop()
                 }
               }
             }
+          } else if (event.channelID == WORLD_SYNC) {
+            // F14a world sync: stamp the real sender, then broadcast
+            // (targetOwner==0) or unicast to the authority/requester.
+            if (event.packet->dataLength >= kWorldSyncHeaderSize) {
+              setWorldSyncSender(static_cast<uint8_t*>(event.packet->data),
+                                 event.packet->dataLength,
+                                 event.peer->connectID);
+              uint32_t targetOwner = 0;
+              if (worldSyncTargetOwner(event.packet->data,
+                                       event.packet->dataLength,
+                                       targetOwner)) {
+                ENetPacket* relay = enet_packet_create(
+                  event.packet->data,
+                  event.packet->dataLength,
+                  ENET_PACKET_FLAG_RELIABLE);
+                if (relay != nullptr) {
+                  if (targetOwner == 0) {
+                    enet_host_broadcast(server, WORLD_SYNC, relay);
+                    enet_host_flush(server);
+                  } else {
+                    auto target = peers.find(targetOwner);
+                    if (target != peers.end() && target->second != nullptr &&
+                        enet_peer_send(target->second, WORLD_SYNC, relay) ==
+                          0) {
+                      enet_host_flush(server);
+                    } else {
+                      enet_packet_destroy(relay);
+                    }
+                  }
+                }
+              }
+            }
           }
           enet_packet_destroy(event.packet);
           break;
-        case ENET_EVENT_TYPE_DISCONNECT: {
-          const uint32_t playerId = event.peer->connectID;
+        case ENET_EVENT_TYPE_DISCONNECT:
+        case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: {
+          uint32_t playerId =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(event.peer->data));
+          auto idIt = peerIDs.find(event.peer);
+          if (idIt != peerIDs.end()) {
+            playerId = idIt->second;
+            peerIDs.erase(idIt);
+          }
+          event.peer->data = nullptr;
+          spdlog::info("MultiPlayer: player {} disconnected", playerId);
           peerScenes.erase(playerId);
           peers.erase(playerId);
           for (auto it = cachedShares.begin(); it != cachedShares.end();) {
@@ -366,6 +453,12 @@ Server::PollLoop()
           clients.erase(
             std::remove(clients.begin(), clients.end(), playerId),
             clients.end());
+
+          // Re-elect the world authority if the departing peer held it.
+          if (playerId == authorityID) {
+            authorityID = clients.empty() ? 0 : clients.front();
+            broadcastAuthority();
+          }
 
           // Tell the remaining peers to drop every window shared by this
           // player, so remote windows do not outlive their owner.

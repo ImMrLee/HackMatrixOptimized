@@ -29,6 +29,8 @@
 #include "window_capture.h"
 #include "window_encode.h"
 #include "window_share_protocol.h"
+#include "world_sync_protocol.h"
+#include "world.h"
 
 #include <spdlog/spdlog.h>
 
@@ -203,6 +205,13 @@ Client::cleanupConnectionState()
     pendingWindowMessages.clear();
   }
   webrtc.reset();
+  authorityID_.store(0);
+  worldSeq_ = 0;
+  lastAppliedWorldSeq_ = 0;
+  {
+    std::lock_guard<std::mutex> lock(worldOutMutex_);
+    worldOutbox_.clear();
+  }
 }
 
 void
@@ -224,14 +233,18 @@ Client::poll()
         }
         break;
       case ENET_EVENT_TYPE_DISCONNECT:
+      case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
         if (connectionState_.load() == ConnectionState::Disconnecting) {
           finishDisconnect();
         } else if (connectionState_.load() == ConnectionState::Connected ||
                    connectionState_.load() == ConnectionState::Connecting) {
           const bool wasConnected =
             connectionState_.load() == ConnectionState::Connected;
+          const bool timedOut =
+            event.type == ENET_EVENT_TYPE_DISCONNECT_TIMEOUT;
           connectionState_ = ConnectionState::Disconnected;
-          connectionError_ = "disconnected from server";
+          connectionError_ = timedOut ? "connection lost (timeout)"
+                                      : "disconnected from server";
           if (wasConnected) {
             stopAllWindowShares();
             clearRemoteWindows();
@@ -246,7 +259,11 @@ Client::poll()
             enet_host_destroy(client);
             client = nullptr;
           }
-          spdlog::warn("MultiPlayer: server closed the connection");
+          if (timedOut) {
+            spdlog::warn("MultiPlayer: connection to server timed out");
+          } else {
+            spdlog::warn("MultiPlayer: server closed the connection");
+          }
         }
         break;
       case ENET_EVENT_TYPE_RECEIVE:
@@ -275,6 +292,7 @@ Client::poll()
       sendSceneInfo();
     }
     syncWindowShares();
+    tickWorldSync();
   }
 }
 
@@ -336,6 +354,9 @@ Client::handleEnetEvent(ENetEvent& event)
       break;
     case 7:
       handleWebRtcSignal(event.packet->data, event.packet->dataLength);
+      break;
+    case 8:
+      handleWorldSync(event.packet->data, event.packet->dataLength);
       break;
     default:
       break;
@@ -2596,5 +2617,313 @@ Client::sendPlayer(glm::vec3 position, glm::vec3 front)
   }
 
   return false;
+}
+
+bool
+Client::isWorldAuthority() const
+{
+  return isConnected() && peer != nullptr &&
+         authorityID_.load() == peer->connectID;
+}
+
+void
+Client::queueWorldMessage(const std::vector<uint8_t>& bytes)
+{
+  if (bytes.empty()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(worldOutMutex_);
+  worldOutbox_.push_back(bytes);
+}
+
+void
+Client::tickWorldSync()
+{
+  if (!isConnected() || peer == nullptr) {
+    return;
+  }
+  std::vector<std::vector<uint8_t>> outbox;
+  {
+    std::lock_guard<std::mutex> lock(worldOutMutex_);
+    outbox.swap(worldOutbox_);
+  }
+  for (const auto& bytes : outbox) {
+    ENetPacket* packet = enet_packet_create(
+      bytes.data(), bytes.size(), ENET_PACKET_FLAG_RELIABLE);
+    if (packet == nullptr) {
+      continue;
+    }
+    if (enet_peer_send(peer, 8, packet) != 0) {
+      enet_packet_destroy(packet);
+      continue;
+    }
+    enet_host_flush(client);
+  }
+}
+
+void
+Client::sendWorldAdd(bool replace,
+                     float size,
+                     const std::vector<glm::vec3>& positions,
+                     const std::vector<glm::vec3>& colors)
+{
+  if (!isConnected() || peer == nullptr || authorityID_.load() == 0) {
+    return;
+  }
+  if (isWorldAuthority()) {
+    queueWorldMessage(encodeWorldAdd(
+      peer->connectID, ++worldSeq_, replace, size, positions, colors));
+  } else {
+    auto bytes = encodeWorldAdd(
+      peer->connectID, 0, replace, size, positions, colors);
+    // Retarget as a forward to the authority.
+    for (int i = 0; i < 4; ++i) {
+      bytes[kWorldSyncTargetOffset + i] =
+        static_cast<uint8_t>((authorityID_.load() >> (8 * i)) & 0xff);
+    }
+    queueWorldMessage(bytes);
+  }
+}
+
+void
+Client::sendWorldClearBox(const glm::vec3& min, const glm::vec3& max)
+{
+  if (!isConnected() || peer == nullptr || authorityID_.load() == 0) {
+    return;
+  }
+  if (isWorldAuthority()) {
+    queueWorldMessage(
+      encodeWorldClearBox(peer->connectID, ++worldSeq_, min, max));
+  } else {
+    auto bytes = encodeWorldClearBox(peer->connectID, 0, min, max);
+    for (int i = 0; i < 4; ++i) {
+      bytes[kWorldSyncTargetOffset + i] =
+        static_cast<uint8_t>((authorityID_.load() >> (8 * i)) & 0xff);
+    }
+    queueWorldMessage(bytes);
+  }
+}
+
+void
+Client::sendWorldClearPositions(const std::vector<glm::vec3>& positions)
+{
+  if (!isWorldAuthority() || peer == nullptr) {
+    return;
+  }
+  queueWorldMessage(
+    encodeWorldClearPositions(peer->connectID, ++worldSeq_, positions));
+}
+
+void
+Client::requestWorldSnapshot()
+{
+  if (!isConnected() || peer == nullptr || authorityID_.load() == 0 ||
+      isWorldAuthority()) {
+    return;
+  }
+  queueWorldMessage(
+    encodeWorldSnapshotRequest(authorityID_.load(), peer->connectID));
+}
+
+void
+Client::sendWorldSnapshot(uint32_t requester)
+{
+  if (!isWorldAuthority() || peer == nullptr || world_ == nullptr) {
+    return;
+  }
+  std::vector<WorldSyncVoxel> voxels;
+  for (const auto& v : world_->apiVoxelSnapshot()) {
+    WorldSyncVoxel w;
+    w.position = v.position;
+    w.edge = v.edge;
+    w.color = v.color;
+    voxels.push_back(w);
+  }
+  queueWorldMessage(
+    encodeWorldSnapshot(requester, peer->connectID, worldSeq_, voxels));
+  spdlog::info("MultiPlayer: sent world snapshot ({} voxels, seq {}) to {}",
+               voxels.size(),
+               worldSeq_,
+               requester);
+}
+
+void
+Client::applyWorldAdd(bool replace,
+                      float size,
+                      const std::vector<glm::vec3>& positions,
+                      const std::vector<glm::vec3>& colors)
+{
+  if (world_ == nullptr) {
+    return;
+  }
+  world_->addApiVoxels(positions, size, colors, replace);
+}
+
+void
+Client::applyWorldClearBox(const glm::vec3& min, const glm::vec3& max)
+{
+  if (world_ == nullptr) {
+    return;
+  }
+  world_->clearApiVoxelsInBox(min, max);
+}
+
+void
+Client::applyWorldClearPositions(const std::vector<glm::vec3>& positions)
+{
+  if (world_ == nullptr) {
+    return;
+  }
+  world_->clearApiVoxelsAtPositions(positions);
+}
+
+void
+Client::handleWorldSync(const uint8_t* data, std::size_t size)
+{
+  if (!data || peer == nullptr) {
+    return;
+  }
+  WorldSyncHeader header;
+  if (!decodeWorldSyncHeader(data, size, header)) {
+    return;
+  }
+
+  if (header.type == WorldSyncType::Authority) {
+    uint32_t authority = 0;
+    if (!decodeWorldAuthority(data, size, authority)) {
+      return;
+    }
+    const bool changed = authorityID_.load() != authority;
+    authorityID_.store(authority);
+    if (changed) {
+      spdlog::info("MultiPlayer: world authority is now {}", authority);
+      if (authority != peer->connectID) {
+        lastAppliedWorldSeq_ = 0;
+        requestWorldSnapshot();
+      }
+    }
+    return;
+  }
+
+  const uint32_t authority = authorityID_.load();
+  if (authority == 0) {
+    return;
+  }
+
+  // A forward addressed to us (we are the authority): apply then rebroadcast
+  // with our own sequence so every client converges in the same order.
+  if (header.targetOwner == peer->connectID && isWorldAuthority()) {
+    if (header.type == WorldSyncType::SnapshotRequest) {
+      sendWorldSnapshot(header.senderID);
+      return;
+    }
+    if (header.type == WorldSyncType::Add) {
+      bool replace = false;
+      float voxelSize = 0.1f;
+      std::vector<glm::vec3> positions;
+      std::vector<glm::vec3> colors;
+      if (decodeWorldAdd(data, size, replace, voxelSize, positions, colors)) {
+        applyWorldAdd(replace, voxelSize, positions, colors);
+        queueWorldMessage(encodeWorldAdd(
+          peer->connectID, ++worldSeq_, replace, voxelSize, positions, colors));
+        static double lastLog = 0.0;
+        const double now = nowSeconds();
+        if (now - lastLog > 1.0) {
+          lastLog = now;
+          spdlog::info("WorldSync: authority applied forwarded add ({} voxels)",
+                       positions.size());
+        }
+      }
+    } else if (header.type == WorldSyncType::ClearBox) {
+      glm::vec3 min;
+      glm::vec3 max;
+      if (decodeWorldClearBox(data, size, min, max)) {
+        applyWorldClearBox(min, max);
+        queueWorldMessage(
+          encodeWorldClearBox(peer->connectID, ++worldSeq_, min, max));
+      }
+    } else if (header.type == WorldSyncType::ClearPositions) {
+      std::vector<glm::vec3> positions;
+      if (decodeWorldClearPositions(data, size, positions)) {
+        applyWorldClearPositions(positions);
+        queueWorldMessage(
+          encodeWorldClearPositions(peer->connectID, ++worldSeq_, positions));
+      }
+    }
+    return;
+  }
+
+  // Authoritative broadcast from the authority.
+  if (header.targetOwner == 0 && header.senderID == authority) {
+    if (isWorldAuthority()) {
+      return; // we already applied our own ops locally
+    }
+    if (header.type == WorldSyncType::Snapshot) {
+      // Snapshot is unicast to us; targetOwner==self, handled below.
+      return;
+    }
+    if (header.seq <= lastAppliedWorldSeq_) {
+      return;
+    }
+    if (header.type == WorldSyncType::Add) {
+      bool replace = false;
+      float voxelSize = 0.1f;
+      std::vector<glm::vec3> positions;
+      std::vector<glm::vec3> colors;
+      if (decodeWorldAdd(data, size, replace, voxelSize, positions, colors)) {
+        applyWorldAdd(replace, voxelSize, positions, colors);
+        lastAppliedWorldSeq_ = header.seq;
+        static double lastLog = 0.0;
+        const double now = nowSeconds();
+        if (now - lastLog > 1.0) {
+          lastLog = now;
+          spdlog::info("WorldSync: applied authoritative add seq {} "
+                       "({} voxels)",
+                       header.seq,
+                       positions.size());
+        }
+      }
+    } else if (header.type == WorldSyncType::ClearBox) {
+      glm::vec3 min;
+      glm::vec3 max;
+      if (decodeWorldClearBox(data, size, min, max)) {
+        applyWorldClearBox(min, max);
+        lastAppliedWorldSeq_ = header.seq;
+      }
+    } else if (header.type == WorldSyncType::ClearPositions) {
+      std::vector<glm::vec3> positions;
+      if (decodeWorldClearPositions(data, size, positions)) {
+        applyWorldClearPositions(positions);
+        lastAppliedWorldSeq_ = header.seq;
+      }
+    }
+    return;
+  }
+
+  // Snapshot unicast to us from the authority.
+  if (header.type == WorldSyncType::Snapshot &&
+      header.targetOwner == peer->connectID && header.senderID == authority) {
+    uint64_t seq = 0;
+    std::vector<WorldSyncVoxel> voxels;
+    if (!decodeWorldSnapshot(data, size, seq, voxels)) {
+      return;
+    }
+    if (world_ != nullptr) {
+      std::vector<glm::vec3> positions;
+      std::vector<glm::vec3> colors;
+      positions.reserve(voxels.size());
+      colors.reserve(voxels.size());
+      float edge = voxels.empty() ? 0.1f : voxels.front().edge;
+      for (const auto& v : voxels) {
+        positions.push_back(v.position);
+        colors.push_back(v.color);
+      }
+      world_->addApiVoxels(positions, edge, colors, true);
+    }
+    lastAppliedWorldSeq_ = seq;
+    spdlog::info("MultiPlayer: applied world snapshot ({} voxels, seq {})",
+                 voxels.size(),
+                 seq);
+  }
 }
 }

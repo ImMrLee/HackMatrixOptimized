@@ -36,13 +36,13 @@
 > 目标：服务端与客户端**共用一个 3D 场景**，但**窗口默认私有**；在 Multiplayer 面板里逐个发布窗口，默认只读，可额外授权控制。
 > 类比 Minecraft：一起建东西，同时各用各的软件，互不打扰。
 >
-> **当前阶段（2026-11-23）**：先做方案 A —— 连接时交换场景指纹（数据库 + 被引用的模型/纹理），场景不一致时禁用窗口共享并在面板里提示；**F14a 权威世界同步仍留作待办**。
+> **当前阶段（2026-11-23）**：方案 A 场景指纹（数据库 + 被引用的模型/纹理）负责连接前置校验；**F14a v1 权威体素同步已实现**（首个客户端为 authority，转发→权威应用→按序广播，迟到客户端取快照；实体运行时同步留作 v2）。
 >
 > **范围决策（2026-11-23）**：多人功能定位为**内网（LAN）互连**。STUN/TURN 公网穿透**明确不做**：WebRTC 只用 host 候选局域网直连（已实测），ENet 服务器只需局域网可达。跨 NAT 场景不在验收范围内。
 
 | # | 子项 | 验收 |
 |---|---|---|
-| F14a | **共享场景基础（B1）** | ⏳ **待办**（当前先用方案 A 的场景一致性校验代替）：两个客户端看到同一份体素/实体世界与彼此头像；世界状态有权威来源（服务端或主机），支持增量同步 |
+| F14a | **共享场景基础（B1）** | 两个客户端看到同一份体素/实体世界与彼此头像；世界状态有权威来源（服务端或主机），支持增量同步 | ✅ **v1 已实现（2026-11-23）**：服务器选举**首个连接客户端为 world authority**，断线后自动改选下一个；authority 的 `ADD_VOXELS`/`CLEAR_VOXELS` 本地应用后按 `seq` 广播，非 authority 的编辑转发给 authority 再由其应用/广播（全序、收敛）；迟到客户端通过 `Snapshot` 获取当前体素覆盖层；场景指纹继续作为连接前置校验。**限制**：仅同步 API 体素层（`World::addApiVoxels`），运行时实体/模型变换仍依赖双方同一份 `db/matrix.db`（v2）；非 authority 的 id 形式清除返回失败（id 是本地分配，需改用 box 清除）。 |
 | F14b | **窗口列表 UI** | 连接成功 / 开服后，Multiplayer 面板下方列出当前窗口（名称、尺寸）；每行「共享」「允许控制」两个开关，**默认都关**；「允许控制」仅在「共享」开启后可用 | ✅ **已实现**：列出非 layer-shell/accessory 的 `WaylandApp`；共享状态存入 `Client`（默认私有，取消共享会清掉控制授权）；场景不一致时整表禁用。Stream 列显示实际传输（WebRTC / ENet H.264 / MJPEG）、FPS、自适应质量与 RTCP RTT；`Share` 接入 H.264/WebRTC 串流，`Allow control` 接入 F14d。 |
 | F14c | **窗口发布与远端显示** | 勾选共享后，其他客户端在**对应世界位置 / 朝向 / 尺寸**看到该窗口的实时画面；窗口移动、缩放、关闭同步 | ✅ **已实现**：`Share` 开关通过 ENet 发布窗口；源端 RGBA→**H.264（NVENC 优先，libx264 回退）**，主路径经 **WebRTC（`webrtcbin` + `rtph264pay`）** 点对点传输，ENet channel 6 保留为 H.264 回退；接收端 GStreamer 解码到 `RemoteApp` 自有纹理，WebRTC 未就绪时使用 ENet H.264/libavcodec，编码失败回退 MJPEG；`Transform` 同步移动/旋转/缩放，帧尺寸同步 resize，`Stop`/`OwnerLeft` 清理窗口。Window streaming 面板可调 Target FPS（1–30）和编码质量（10–95，映射到 H.264 码率），默认 5 FPS / 65。关键帧请求、SPS/PPS 每个 IDR 重复、RTCP 丢包/RTT 驱动的自适应质量均已接入。实测单/双 viewer 同时观看同一窗口，WebRTC 建连约 0.2 s，画面方向/颜色正确。 |
 | F14d | **默认只读 + 授权控制** | 默认不可操作；勾选「允许控制」后，**同一时刻只允许一个控制者**，可随时收回；输入注入到共享者本地的对应 surface | ✅ **已实现**：默认只读；共享者勾选 Allow control 后通过 `ControlState` 广播；接收端在 Remote windows 表里请求控制（显示 Requesting… 状态），共享者按 shareId 只接受一个 controller；接收端转发指针移动/按键/滚轮/键盘，共享者通过 `wlr_seat_pointer_notify_*` / `wlr_seat_keyboard_notify_*` 注入到本地 `WaylandApp`；支持 Release / 共享者收回 / controller 断线清理。**控制期间自动把该窗口提升到至少 15 FPS**，并在共享画面里叠加远控光标；owner 端提示 “player #N took/released control”。远程注入会避让 owner 最近 0.75 s 的本地键鼠，避免抢焦点；keycode 有范围校验。 |
@@ -81,7 +81,7 @@ Multiplayer
 4. 共享窗口的音频是否一起传？（先不做）
 5. 首次授权控制是否需要被控端弹窗确认？（建议需要）
 
-> 依赖：F14a 是「出现在场景对应位置」的前提。若两个客户端加载同一份 `db/matrix.db`，可先不做世界同步，用最小版验证 F14b–F14d。
+> 依赖：F14a 是「出现在场景对应位置」的前提。双方仍加载同一份 `db/matrix.db`；F14a v1 只把运行时 **API 体素**覆盖层做成权威同步，实体/模型运行时变化留到 v2。
 
 ## 完成记录
 
@@ -95,7 +95,9 @@ Multiplayer
   - **WebRTC 韧性**：新增 connection event 上报；sender/receiver 失败会自动拆除并按 1→2→4→8 s 退避重建（带 `Reconnect` 信令），静默 stall 3 s 也会触发重连；WebRTC 帧新鲜时忽略 ENet 回退，回退阈值从 2 s 降到 1 s，静止/丢包时能更快恢复。面板显示 WebRTC / ENet fallback（retry pending）/ stalled 等真实状态。
   - **远控体验**：控制生效时该窗口自动提升到 ≥15 FPS；共享画面内绘制高对比远控光标；请求控制显示 pending，owner 端显示 “player #N took/released control”；注入输入会避让 owner 最近 0.75 s 的本地键鼠；窗口尺寸未知时 Start 使用 1×1 占位，等首帧自动 resize。
 
-- 2026-11-23：**多人场景一致性校验（方案 A）** 已实现：连接时交换场景指纹（`db/matrix.db` + DB 引用的 OBJ/MTL/纹理），服务器中继；不一致时日志警告并在 Multiplayer 面板禁用窗口共享。实测同场景显示 “Scenes match”，改一条 `Positionable` 后显示 “Scene mismatch”。**F14a 权威世界同步仍待办。**
+- 2026-11-23：**F14a v1 权威体素同步** 已实现：新增 channel 8（`world_sync_protocol.h`）：`Authority / Add / ClearBox / ClearPositions / SnapshotRequest / Snapshot`。服务器把首个客户端选为 authority 并在断线超时后改选；authority 的体素操作本地应用后按 `seq` 广播，其他客户端转发编辑、应用权威广播；迟到客户端请求快照（实测 91 体素快照、断线改选、新 authority 继续广播均通过）。`Api` 通过 client provider 判断是否转发；非 authority 不再本地应用，避免分叉。**实测**：非 authority 发送的 91 体素波在两端渲染一致；authority 被杀后 ~15s 改选；新客户端从新 authority 取快照并继续接收增量。**限制**：仅 API 体素层；id 清除在非 authority 返回失败。
+- 2026-11-23：**服务器掉线检测修复**：ENet 对静默失联对等体发出的是 `ENET_EVENT_TYPE_DISCONNECT_TIMEOUT`（原代码只处理 `DISCONNECT`），导致崩溃/断网的玩家、窗口和 authority 永远留在服务器内存中。现在两种事件统一清理；服务器每 2s 主动 ping、连接时收紧超时（10/5s/15s），实测崩溃客户端 ~15s 内被移除并触发 authority 改选。
+- 2026-11-23：**多人场景一致性校验（方案 A）** 已实现：连接时交换场景指纹（`db/matrix.db` + DB 引用的 OBJ/MTL/纹理），服务器中继；不一致时日志警告并在 Multiplayer 面板禁用窗口共享。实测同场景显示 “Scenes match”，改一条 `Positionable` 后显示 “Scene mismatch”。
 - 2026-11-23：**F14b 窗口列表 UI** 已实现：Multiplayer 面板列出当前窗口、尺寸、共享/允许控制开关；默认私有，取消共享会撤销控制授权；场景不一致时整表禁用。共享状态目前只在 `Client` 本地记录，等待 F14c 串流接入。
 - 2026-11-23：**F14c-1 本地 loopback 预览** 已实现：新增 `RemoteApp : AppSurface`，Multiplayer 面板的 Preview 按钮会在源窗口前方生成一个缩小副本；`renderer_apps` 增加远端窗口的 in-world 绘制路径。实测截图确认源窗口与预览副本同时显示。
 - 2026-11-23：**F14c-2 MJPEG 双端串流** 已实现：`Share` 开关启动/停止发布；源端用 FBO + `glReadPixels` 抓帧，`stb_image_write` 编码 JPEG（5 FPS、quality 65），经 ENet channel 4（unreliable fragment）由服务器中继；接收端解码并用 `RemoteApp::setRgbaFrame` 上传纹理。服务器在断线时广播 `OwnerLeft`，接收端清理远端窗口。实测两个 headless 客户端：共享端日志 `sharing window ...`，接收端 `showing shared window ...`，截图确认窗口内容显示正确（修复了 JPEG 解码的垂直翻转）。

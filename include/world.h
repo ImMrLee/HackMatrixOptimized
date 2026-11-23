@@ -99,6 +99,17 @@ public:
                                bool replace);
   void clearApiVoxelsByIds(const vector<int64_t>& ids);
   void clearApiVoxelsInBox(const glm::vec3& min, const glm::vec3& max);
+  // F14a world sync: semantic accessors so an authority can serialize its
+  // runtime voxel overlay and resolve id-based clears to positions.
+  struct ApiVoxel
+  {
+    glm::vec3 position;
+    float edge;
+    glm::vec3 color;
+  };
+  vector<ApiVoxel> apiVoxelSnapshot() const;
+  vector<glm::vec3> apiVoxelPositions(const vector<int64_t>& ids) const;
+  void clearApiVoxelsAtPositions(const vector<glm::vec3>& positions);
   void clearDynamicObjectsInBox(const glm::vec3& min, const glm::vec3& max);
   void addLine(Line line) override;
   void removeLine(Line line) override;

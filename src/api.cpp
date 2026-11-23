@@ -1,4 +1,5 @@
 #include "api.h"
+#include "MultiPlayer/Client.h"
 #include "components/Light.h"
 #include "controls.h"
 #include "dynamicObject.h"
@@ -443,27 +444,54 @@ Api::handleAddVoxels(const BatchedRequest& batchedRequest)
   }
   // Allow empty positions when replace is true so callers can clear voxels.
   bool shouldUpdate = replace || !positions.empty();
-  if (world != nullptr && shouldUpdate) {
-    auto ids = colors.empty()
-                 ? world->addApiVoxels(positions, size, color, replace)
-                 : world->addApiVoxels(positions, size, colors, replace);
-    for (auto id : ids) {
-      response.add_voxel_ids(id);
+  if (world == nullptr || !shouldUpdate) {
+    if (renderer != nullptr && shouldUpdate) {
+      if (logger) {
+        logger->info("AddVoxels: count={}, replace={}, size={}",
+                     positions.size(),
+                     replace,
+                     size);
+      }
+      renderer->setLines(world != nullptr ? world->getLines()
+                                          : std::vector<Line>{});
+      renderer->addVoxels(positions, replace, size, color);
+      response.set_success(true);
+    } else {
+      response.set_success(false);
     }
-    response.set_success(true);
-  } else if (renderer != nullptr && shouldUpdate) {
-    if (logger) {
-      logger->info("AddVoxels: count={}, replace={}, size={}",
-                   positions.size(),
-                   replace,
-                   size);
+    fulfillPendingResponse(batchedRequest.id, response);
+    return;
+  }
+
+  auto client = clientProvider_ ? clientProvider_() : nullptr;
+  const bool synced = client && client->isConnected() &&
+                      client->worldAuthorityID() != 0;
+  if (synced && !client->isWorldAuthority()) {
+    // F14a: the authority owns the world overlay; forward and wait for its
+    // authoritative broadcast instead of applying locally.
+    std::vector<glm::vec3> syncColors = colors;
+    if (syncColors.empty()) {
+      syncColors.assign(positions.size(), color);
     }
-    renderer->setLines(world != nullptr ? world->getLines()
-                                        : std::vector<Line>{});
-    renderer->addVoxels(positions, replace, size, color);
+    client->sendWorldAdd(replace, size, positions, syncColors);
     response.set_success(true);
-  } else {
-    response.set_success(false);
+    fulfillPendingResponse(batchedRequest.id, response);
+    return;
+  }
+
+  auto ids = colors.empty()
+               ? world->addApiVoxels(positions, size, color, replace)
+               : world->addApiVoxels(positions, size, colors, replace);
+  for (auto id : ids) {
+    response.add_voxel_ids(id);
+  }
+  response.set_success(true);
+  if (synced) {
+    std::vector<glm::vec3> syncColors = colors;
+    if (syncColors.empty()) {
+      syncColors.assign(positions.size(), color);
+    }
+    client->sendWorldAdd(replace, size, positions, syncColors);
   }
   fulfillPendingResponse(batchedRequest.id, response);
 }
@@ -471,6 +499,11 @@ Api::handleAddVoxels(const BatchedRequest& batchedRequest)
 void
 Api::handleClearVoxels(const BatchedRequest& batchedRequest)
 {
+  auto client = clientProvider_ ? clientProvider_() : nullptr;
+  const bool synced = client && client->isConnected() &&
+                      client->worldAuthorityID() != 0;
+  const bool isAuthority = synced && client->isWorldAuthority();
+
   auto clear = batchedRequest.request.clearvoxels();
   if (clear.has_ids()) {
     ApiRequestResponse response;
@@ -481,8 +514,26 @@ Api::handleClearVoxels(const BatchedRequest& batchedRequest)
       ids.push_back(id);
       response.add_voxel_ids(id);
     }
+    if (synced && !isAuthority) {
+      // Ids are allocated locally by the authority's world; a non-authority
+      // never created these objects, so it cannot resolve them. Ask for a box
+      // clear instead.
+      if (logger) {
+        logger->warn("ClearVoxels by id requires the world authority; "
+                     "ignored on this client");
+      }
+      response.set_success(false);
+      fulfillPendingResponse(batchedRequest.id, response);
+      return;
+    }
     if (world != nullptr) {
-      world->clearApiVoxelsByIds(ids);
+      if (isAuthority) {
+        const auto positions = world->apiVoxelPositions(ids);
+        world->clearApiVoxelsByIds(ids);
+        client->sendWorldClearPositions(positions);
+      } else {
+        world->clearApiVoxelsByIds(ids);
+      }
       response.set_success(true);
     } else {
       response.set_success(false);
@@ -511,8 +562,17 @@ Api::handleClearVoxels(const BatchedRequest& batchedRequest)
                  max.y,
                  max.z);
   }
+  if (synced && !isAuthority) {
+    client->sendWorldClearBox(min, max);
+    response.set_success(true);
+    fulfillPendingResponse(batchedRequest.id, response);
+    return;
+  }
   if (world != nullptr) {
     world->clearDynamicObjectsInBox(min, max);
+    if (isAuthority) {
+      client->sendWorldClearBox(min, max);
+    }
     response.set_success(true);
   } else {
     response.set_success(false);
@@ -1080,6 +1140,10 @@ Api::confirmClearArea(int64_t actionId)
   const auto& action = it->second;
   if (world != nullptr) {
     world->clearDynamicObjectsInBox(action.min, action.max);
+  }
+  auto client = clientProvider_ ? clientProvider_() : nullptr;
+  if (client && client->isConnected() && client->isWorldAuthority()) {
+    client->sendWorldClearBox(action.min, action.max);
   }
   if (logger) {
     logger->info("Confirmed clear area {}", actionId);

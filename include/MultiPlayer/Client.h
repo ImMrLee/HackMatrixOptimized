@@ -15,6 +15,7 @@ class H264Decoder;
 class WebRtcManager;
 class WindowCapture;
 class WindowEncodeWorker;
+class World;
 
 namespace MultiPlayer {
 
@@ -107,6 +108,21 @@ public:
                              uint32_t source,
                              uint32_t orientation);
   void sendRemoteKey(uint32_t keycode, bool pressed);
+
+  // F14a authoritative world sync (voxel overlay). The relay elects the first
+  // client as authority; the authority broadcasts sequenced ops, other clients
+  // forward edits and apply the authoritative broadcast.
+  void setWorld(World* world) { world_ = world; }
+  uint32_t worldAuthorityID() const { return authorityID_.load(); }
+  bool isWorldAuthority() const;
+  // Send an edit. Authority broadcasts with a fresh seq; others forward to the
+  // authority. Local application is the caller's (Api) responsibility.
+  void sendWorldAdd(bool replace,
+                    float size,
+                    const std::vector<glm::vec3>& positions,
+                    const std::vector<glm::vec3>& colors);
+  void sendWorldClearBox(const glm::vec3& min, const glm::vec3& max);
+  void sendWorldClearPositions(const std::vector<glm::vec3>& positions);
 
 private:
   enum class ConnectionState : std::uint8_t
@@ -204,6 +220,18 @@ private:
   void persistWindowStreamQuality(int quality);
   WindowEncodeWorker* ensureEncodeWorker();
 
+  void handleWorldSync(const uint8_t* data, std::size_t size);
+  void tickWorldSync();
+  void queueWorldMessage(const std::vector<uint8_t>& bytes);
+  void requestWorldSnapshot();
+  void sendWorldSnapshot(uint32_t requester);
+  void applyWorldAdd(bool replace,
+                     float size,
+                     const std::vector<glm::vec3>& positions,
+                     const std::vector<glm::vec3>& colors);
+  void applyWorldClearBox(const glm::vec3& min, const glm::vec3& max);
+  void applyWorldClearPositions(const std::vector<glm::vec3>& positions);
+
   ENetHost* client;
   ENetPeer* peer;
   std::atomic<ConnectionState> connectionState_{
@@ -244,6 +272,14 @@ private:
   std::unique_ptr<WindowEncodeWorker> encodeWorker_;
   std::string controlNotice_;
   double controlNoticeUntil_ = 0.0;
+
+  // F14a world sync state. world_ is owned by Engine and set each frame.
+  World* world_ = nullptr;
+  std::atomic<uint32_t> authorityID_{ 0 };
+  uint64_t worldSeq_ = 0;          // authority's outgoing sequence
+  uint64_t lastAppliedWorldSeq_ = 0; // last authoritative seq applied
+  std::mutex worldOutMutex_;
+  std::vector<std::vector<uint8_t>> worldOutbox_;
 };
 
 }

@@ -201,6 +201,7 @@ Engine::initializeMemberObjs()
   }
   api = std::make_unique<Api>(
     apiAddress, registry, controls.get(), renderer.get(), world.get(), wm);
+  api->setClientProvider([this]() { return client; });
   if (wm) {
     wm->registerControls(controls.get());
   }
@@ -253,6 +254,7 @@ Engine::drainMultiplayerCommands()
       }
       multiplayerError_.clear();
       auto candidate = std::make_shared<MultiPlayer::Client>(registry);
+      candidate->setWorld(world.get());
       if (!candidate->connect(command.host, command.port)) {
         multiplayerError_ = "Could not start connection to " + command.host +
                             ":" + std::to_string(command.port);
@@ -397,6 +399,9 @@ Engine::updateImGuiKey(xkb_keysym_t sym, bool pressed)
 void
 Engine::registerClient(shared_ptr<MultiPlayer::Client> _client)
 {
+  if (_client) {
+    _client->setWorld(world.get());
+  }
   client = _client;
 }
 

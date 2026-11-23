@@ -1,6 +1,7 @@
 #ifndef __API_H__
 #define __API_H__
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -21,6 +22,9 @@ using namespace std;
 struct wl_display;
 class Controls;
 class Renderer;
+namespace MultiPlayer {
+class Client;
+}
 class Api;
 class CommandServer
 {
@@ -97,6 +101,8 @@ class Api
   shared_ptr<EntityRegistry> registry;
   Renderer* renderer = nullptr;
   World* world = nullptr;
+  // F14a: provider returning the current multiplayer client (render thread).
+  std::function<std::shared_ptr<MultiPlayer::Client>()> clientProvider_;
 
   zmq::context_t context;
   CommandServer* commandServer;
@@ -162,6 +168,11 @@ public:
       World* world,
       WindowManager::WindowManagerPtr);
   void setDisplay(wl_display* d) { display = d; }
+  void setClientProvider(
+    std::function<std::shared_ptr<MultiPlayer::Client>()> provider)
+  {
+    clientProvider_ = std::move(provider);
+  }
   ~Api();
   void poll();
   void mutateEntities();

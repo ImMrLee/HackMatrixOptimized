@@ -97,4 +97,7 @@ public:
   bool damaged() override;
   void setDamaged(bool);
   glm::vec3 getPosition() override;
+  // Size/color are fixed at construction; safe to read without the lock.
+  glm::vec3 getSize() const { return size; }
+  glm::vec3 getColor() const { return color; }
 };
