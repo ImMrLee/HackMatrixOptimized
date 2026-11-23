@@ -376,6 +376,18 @@ Api::handleMove(const BatchedRequest& batchedRequest)
 {
   auto entityId = static_cast<entt::entity>(batchedRequest.request.entityid());
   auto move = batchedRequest.request.move();
+  auto client = clientProvider_ ? clientProvider_() : nullptr;
+  if (client && client->isConnected() && client->worldAuthorityID() != 0 &&
+      !client->isWorldAuthority() &&
+      client->isSyncedEntity(
+        static_cast<uint32_t>(batchedRequest.request.entityid()))) {
+    // F14a v2: only the authority mutates shared scene entities.
+    client->sendWorldEntityMove(
+      static_cast<uint32_t>(batchedRequest.request.entityid()),
+      glm::vec3(move.xdelta(), move.ydelta(), move.zdelta()),
+      move.unitspersecond());
+    return;
+  }
   systems::translate(registry,
                      entityId,
                      glm::vec3(move.xdelta(), move.ydelta(), move.zdelta()),
@@ -808,6 +820,14 @@ Api::handleAddComponent(const BatchedRequest& batchedRequest)
         data.has_origin() ? toVec3(data.origin()) : glm::vec3(0.0f);
       glm::vec3 rotation = toVec3(data.rotation());
       float scale = data.scale();
+      auto client = clientProvider_ ? clientProvider_() : nullptr;
+      if (client && client->isConnected() &&
+          client->worldAuthorityID() != 0 && !client->isWorldAuthority() &&
+          registry->any_of<Positionable>(target)) {
+        client->sendWorldEntityEdit(
+          static_cast<uint32_t>(target), pos, origin, rotation, scale);
+        break;
+      }
       if (registry->any_of<Positionable>(target)) {
         auto& positionable = registry->get<Positionable>(target);
         positionable.pos = pos;
@@ -890,6 +910,11 @@ Api::handleEditComponent(const BatchedRequest& batchedRequest)
 {
   const auto& edit = batchedRequest.request.editcomponent();
   const auto& component = edit.component();
+  if (logger) {
+    logger->debug("EditComponent: entity {} type {}",
+                  static_cast<long long>(batchedRequest.request.entityid()),
+                  static_cast<int>(component.type()));
+  }
   if (!registry) {
     return;
   }
@@ -906,11 +931,22 @@ Api::handleEditComponent(const BatchedRequest& batchedRequest)
       }
       const auto& data = component.positionable();
       auto& positionable = registry->get<Positionable>(target);
-      positionable.pos = toVec3(data.position());
-      positionable.origin =
+      glm::vec3 pos = toVec3(data.position());
+      glm::vec3 origin =
         data.has_origin() ? toVec3(data.origin()) : glm::vec3(0.0f);
-      positionable.rotate = toVec3(data.rotation());
-      positionable.scale = data.scale();
+      glm::vec3 rotation = toVec3(data.rotation());
+      float scale = data.scale();
+      auto client = clientProvider_ ? clientProvider_() : nullptr;
+      if (client && client->isConnected() &&
+          client->worldAuthorityID() != 0 && !client->isWorldAuthority()) {
+        client->sendWorldEntityEdit(
+          static_cast<uint32_t>(target), pos, origin, rotation, scale);
+        break;
+      }
+      positionable.pos = pos;
+      positionable.origin = origin;
+      positionable.rotate = rotation;
+      positionable.scale = scale;
       positionable.damage();
       break;
     }

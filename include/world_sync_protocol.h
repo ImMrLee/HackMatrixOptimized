@@ -29,6 +29,20 @@ enum class WorldSyncType : std::uint8_t
   ClearPositions = 4,
   SnapshotRequest = 5,
   Snapshot = 6,
+  // v2: runtime entity transforms (DB-persisted scene entities).
+  EntityTransform = 7,
+  EntityMove = 8,
+  EntitySnapshot = 9,
+};
+
+// Entity transform payload shared by EntityTransform and EntitySnapshot.
+struct WorldSyncEntityTransform
+{
+  std::uint32_t entityID = 0;
+  glm::vec3 position{ 0.0f };
+  glm::vec3 origin{ 0.0f };
+  glm::vec3 rotate{ 0.0f };
+  float scale = 1.0f;
 };
 
 struct WorldSyncHeader
@@ -376,6 +390,146 @@ decodeWorldSnapshot(const std::uint8_t* data,
       return false;
     }
     voxels.push_back(v);
+  }
+  return true;
+}
+
+// --- v2: entity transforms ------------------------------------------------
+
+inline void
+appendEntityTransform(std::vector<std::uint8_t>& out,
+                      const WorldSyncEntityTransform& t)
+{
+  using namespace world_sync_detail;
+  appendU32(out, t.entityID);
+  appendVec3(out, t.position);
+  appendVec3(out, t.origin);
+  appendVec3(out, t.rotate);
+  appendF32(out, t.scale);
+}
+
+inline bool
+readEntityTransform(world_sync_detail::Reader& r,
+                    WorldSyncEntityTransform& t)
+{
+  return r.u32(t.entityID) && r.vec3(t.position) && r.vec3(t.origin) &&
+         r.vec3(t.rotate) && r.f32(t.scale);
+}
+
+inline std::vector<std::uint8_t>
+encodeWorldEntityTransform(std::uint32_t senderID,
+                           std::uint64_t seq,
+                           const WorldSyncEntityTransform& transform)
+{
+  std::vector<std::uint8_t> out;
+  world_sync_detail::appendHeader(
+    out, WorldSyncType::EntityTransform, 0, senderID, seq);
+  appendEntityTransform(out, transform);
+  return out;
+}
+
+// Forwarded from a non-authority to the authority (absolute transform).
+inline std::vector<std::uint8_t>
+encodeWorldEntityEdit(std::uint32_t targetOwner,
+                      std::uint32_t senderID,
+                      const WorldSyncEntityTransform& transform)
+{
+  std::vector<std::uint8_t> out;
+  world_sync_detail::appendHeader(
+    out, WorldSyncType::EntityTransform, targetOwner, senderID, 0);
+  appendEntityTransform(out, transform);
+  return out;
+}
+
+inline bool
+decodeWorldEntityTransform(const std::uint8_t* data,
+                           std::size_t size,
+                           WorldSyncEntityTransform& transform)
+{
+  WorldSyncHeader header;
+  if (!decodeWorldSyncHeader(data, size, header) ||
+      header.type != WorldSyncType::EntityTransform) {
+    return false;
+  }
+  world_sync_detail::Reader r{ data, size, kWorldSyncHeaderSize };
+  return readEntityTransform(r, transform);
+}
+
+inline std::vector<std::uint8_t>
+encodeWorldEntityMove(std::uint32_t targetOwner,
+                      std::uint32_t senderID,
+                      std::uint32_t entityID,
+                      const glm::vec3& delta,
+                      float unitsPerSecond)
+{
+  using namespace world_sync_detail;
+  std::vector<std::uint8_t> out;
+  appendHeader(out, WorldSyncType::EntityMove, targetOwner, senderID, 0);
+  appendU32(out, entityID);
+  appendVec3(out, delta);
+  appendF32(out, unitsPerSecond);
+  return out;
+}
+
+inline bool
+decodeWorldEntityMove(const std::uint8_t* data,
+                      std::size_t size,
+                      std::uint32_t& entityID,
+                      glm::vec3& delta,
+                      float& unitsPerSecond)
+{
+  WorldSyncHeader header;
+  if (!decodeWorldSyncHeader(data, size, header) ||
+      header.type != WorldSyncType::EntityMove) {
+    return false;
+  }
+  world_sync_detail::Reader r{ data, size, kWorldSyncHeaderSize };
+  return r.u32(entityID) && r.vec3(delta) && r.f32(unitsPerSecond);
+}
+
+inline std::vector<std::uint8_t>
+encodeWorldEntitySnapshot(
+  std::uint32_t targetOwner,
+  std::uint32_t senderID,
+  std::uint64_t seq,
+  const std::vector<WorldSyncEntityTransform>& entities)
+{
+  using namespace world_sync_detail;
+  std::vector<std::uint8_t> out;
+  appendHeader(out, WorldSyncType::EntitySnapshot, targetOwner, senderID, seq);
+  appendU32(out, static_cast<std::uint32_t>(entities.size()));
+  for (const auto& t : entities) {
+    appendEntityTransform(out, t);
+  }
+  return out;
+}
+
+inline bool
+decodeWorldEntitySnapshot(
+  const std::uint8_t* data,
+  std::size_t size,
+  std::uint64_t& seq,
+  std::vector<WorldSyncEntityTransform>& entities)
+{
+  WorldSyncHeader header;
+  if (!decodeWorldSyncHeader(data, size, header) ||
+      header.type != WorldSyncType::EntitySnapshot) {
+    return false;
+  }
+  seq = header.seq;
+  world_sync_detail::Reader r{ data, size, kWorldSyncHeaderSize };
+  std::uint32_t count = 0;
+  if (!r.u32(count)) {
+    return false;
+  }
+  entities.clear();
+  entities.reserve(count);
+  for (std::uint32_t i = 0; i < count; ++i) {
+    WorldSyncEntityTransform t;
+    if (!readEntityTransform(r, t)) {
+      return false;
+    }
+    entities.push_back(t);
   }
   return true;
 }

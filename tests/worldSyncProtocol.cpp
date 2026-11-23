@@ -113,6 +113,87 @@ TEST(WorldSyncProtocol, ClearAndSnapshotRoundTrip)
   EXPECT_EQ(decodedVoxels[1].color, voxels[1].color);
 }
 
+TEST(WorldSyncProtocol, EntityTransformRoundTrip)
+{
+  WorldSyncEntityTransform transform;
+  transform.entityID = 42;
+  transform.position = { 1.0f, 2.0f, 3.0f };
+  transform.origin = { -1.0f, 0.5f, 0.25f };
+  transform.rotate = { 0.0f, 90.0f, 0.0f };
+  transform.scale = 1.5f;
+
+  auto broadcast = encodeWorldEntityTransform(7, 12, transform);
+  WorldSyncHeader header;
+  ASSERT_TRUE(
+    decodeWorldSyncHeader(broadcast.data(), broadcast.size(), header));
+  EXPECT_EQ(header.type, WorldSyncType::EntityTransform);
+  EXPECT_EQ(header.targetOwner, 0u);
+  EXPECT_EQ(header.seq, 12u);
+
+  WorldSyncEntityTransform decoded;
+  ASSERT_TRUE(decodeWorldEntityTransform(
+    broadcast.data(), broadcast.size(), decoded));
+  EXPECT_EQ(decoded.entityID, 42u);
+  EXPECT_EQ(decoded.position, transform.position);
+  EXPECT_EQ(decoded.origin, transform.origin);
+  EXPECT_EQ(decoded.rotate, transform.rotate);
+  EXPECT_FLOAT_EQ(decoded.scale, 1.5f);
+
+  auto forward = encodeWorldEntityEdit(9, 7, transform);
+  ASSERT_TRUE(decodeWorldSyncHeader(forward.data(), forward.size(), header));
+  EXPECT_EQ(header.targetOwner, 9u);
+  EXPECT_EQ(header.senderID, 7u);
+  EXPECT_EQ(header.seq, 0u);
+}
+
+TEST(WorldSyncProtocol, EntityMoveRoundTrip)
+{
+  auto bytes = encodeWorldEntityMove(
+    5, 3, 77, glm::vec3(0.25f, -1.0f, 2.0f), 4.0f);
+  WorldSyncHeader header;
+  ASSERT_TRUE(decodeWorldSyncHeader(bytes.data(), bytes.size(), header));
+  EXPECT_EQ(header.type, WorldSyncType::EntityMove);
+  EXPECT_EQ(header.targetOwner, 5u);
+  EXPECT_EQ(header.senderID, 3u);
+
+  std::uint32_t entityID = 0;
+  glm::vec3 delta;
+  float unitsPerSecond = 0.0f;
+  ASSERT_TRUE(decodeWorldEntityMove(
+    bytes.data(), bytes.size(), entityID, delta, unitsPerSecond));
+  EXPECT_EQ(entityID, 77u);
+  EXPECT_EQ(delta, glm::vec3(0.25f, -1.0f, 2.0f));
+  EXPECT_FLOAT_EQ(unitsPerSecond, 4.0f);
+}
+
+TEST(WorldSyncProtocol, EntitySnapshotRoundTrip)
+{
+  std::vector<WorldSyncEntityTransform> entities(2);
+  entities[0].entityID = 1;
+  entities[0].position = { 0.0f, 1.0f, 2.0f };
+  entities[0].origin = { 0.0f, 0.0f, 0.0f };
+  entities[0].rotate = { 0.0f, 0.0f, 0.0f };
+  entities[0].scale = 1.0f;
+  entities[1].entityID = 2;
+  entities[1].position = { -1.0f, 2.0f, 3.0f };
+  entities[1].origin = { 0.1f, 0.2f, 0.3f };
+  entities[1].rotate = { 5.0f, 6.0f, 7.0f };
+  entities[1].scale = 0.5f;
+
+  auto bytes = encodeWorldEntitySnapshot(8, 4, 33, entities);
+  std::uint64_t seq = 0;
+  std::vector<WorldSyncEntityTransform> decoded;
+  ASSERT_TRUE(
+    decodeWorldEntitySnapshot(bytes.data(), bytes.size(), seq, decoded));
+  EXPECT_EQ(seq, 33u);
+  ASSERT_EQ(decoded.size(), 2u);
+  EXPECT_EQ(decoded[0].entityID, 1u);
+  EXPECT_EQ(decoded[1].position, entities[1].position);
+  EXPECT_FLOAT_EQ(decoded[1].scale, 0.5f);
+  EXPECT_FALSE(
+    decodeWorldEntitySnapshot(bytes.data(), bytes.size() - 1, seq, decoded));
+}
+
 TEST(WorldSyncProtocol, TruncatedPayloadsAreRejected)
 {
   auto add = encodeWorldAdd(

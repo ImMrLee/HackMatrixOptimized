@@ -19,6 +19,8 @@ class World;
 
 namespace MultiPlayer {
 
+struct WorldSyncEntityTransform;
+
 struct WindowShareSettings
 {
   bool shared = false;
@@ -123,6 +125,16 @@ public:
                     const std::vector<glm::vec3>& colors);
   void sendWorldClearBox(const glm::vec3& min, const glm::vec3& max);
   void sendWorldClearPositions(const std::vector<glm::vec3>& positions);
+  // v2: DB-persisted scene entities (stable ids across peers).
+  bool isSyncedEntity(uint32_t entityID) const;
+  void sendWorldEntityMove(uint32_t entityID,
+                           const glm::vec3& delta,
+                           float unitsPerSecond);
+  void sendWorldEntityEdit(uint32_t entityID,
+                           const glm::vec3& position,
+                           const glm::vec3& origin,
+                           const glm::vec3& rotate,
+                           float scale);
 
 private:
   enum class ConnectionState : std::uint8_t
@@ -231,6 +243,9 @@ private:
                      const std::vector<glm::vec3>& colors);
   void applyWorldClearBox(const glm::vec3& min, const glm::vec3& max);
   void applyWorldClearPositions(const std::vector<glm::vec3>& positions);
+  void tickEntitySync();
+  void sendWorldEntitySnapshot(uint32_t targetOwner);
+  void applyWorldEntityTransform(const WorldSyncEntityTransform& transform);
 
   ENetHost* client;
   ENetPeer* peer;
@@ -280,6 +295,17 @@ private:
   uint64_t lastAppliedWorldSeq_ = 0; // last authoritative seq applied
   std::mutex worldOutMutex_;
   std::vector<std::vector<uint8_t>> worldOutbox_;
+  // Authority-side cache of DB-persisted entity transforms, scanned at ~20 Hz.
+  struct SyncedTransform
+  {
+    glm::vec3 position{ 0.0f };
+    glm::vec3 origin{ 0.0f };
+    glm::vec3 rotate{ 0.0f };
+    float scale = 1.0f;
+  };
+  std::unordered_map<uint32_t, SyncedTransform> syncedTransforms_;
+  bool entitySyncPrimed_ = false;
+  double nextEntityScan_ = 0.0;
 };
 
 }

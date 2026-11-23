@@ -19,7 +19,9 @@
 #include "Config.h"
 #include "camera.h"
 #include "model.h"
+#include "persister.h"
 #include "remote_app.h"
+#include "systems/Move.h"
 #include "systems/Player.h"
 #include "time_utils.h"
 #include "video_codec.h"
@@ -208,6 +210,9 @@ Client::cleanupConnectionState()
   authorityID_.store(0);
   worldSeq_ = 0;
   lastAppliedWorldSeq_ = 0;
+  syncedTransforms_.clear();
+  entitySyncPrimed_ = false;
+  nextEntityScan_ = 0.0;
   {
     std::lock_guard<std::mutex> lock(worldOutMutex_);
     worldOutbox_.clear();
@@ -293,6 +298,7 @@ Client::poll()
     }
     syncWindowShares();
     tickWorldSync();
+    tickEntitySync();
   }
 }
 
@@ -2741,6 +2747,8 @@ Client::sendWorldSnapshot(uint32_t requester)
   }
   queueWorldMessage(
     encodeWorldSnapshot(requester, peer->connectID, worldSeq_, voxels));
+  // Scene entities are runtime state too; send their current transforms.
+  sendWorldEntitySnapshot(requester);
   spdlog::info("MultiPlayer: sent world snapshot ({} voxels, seq {}) to {}",
                voxels.size(),
                worldSeq_,
@@ -2777,6 +2785,151 @@ Client::applyWorldClearPositions(const std::vector<glm::vec3>& positions)
   world_->clearApiVoxelsAtPositions(positions);
 }
 
+bool
+Client::isSyncedEntity(uint32_t entityID) const
+{
+  if (!registry || entityID == 0) {
+    return false;
+  }
+  const entt::entity entity = static_cast<entt::entity>(entityID);
+  return registry->valid(entity) && registry->any_of<Persistable>(entity);
+}
+
+void
+Client::sendWorldEntityMove(uint32_t entityID,
+                            const glm::vec3& delta,
+                            float unitsPerSecond)
+{
+  if (!isConnected() || peer == nullptr || authorityID_.load() == 0 ||
+      isWorldAuthority()) {
+    return;
+  }
+  queueWorldMessage(encodeWorldEntityMove(
+    authorityID_.load(), peer->connectID, entityID, delta, unitsPerSecond));
+}
+
+void
+Client::sendWorldEntityEdit(uint32_t entityID,
+                            const glm::vec3& position,
+                            const glm::vec3& origin,
+                            const glm::vec3& rotate,
+                            float scale)
+{
+  if (!isConnected() || peer == nullptr || authorityID_.load() == 0 ||
+      isWorldAuthority()) {
+    return;
+  }
+  WorldSyncEntityTransform transform;
+  transform.entityID = entityID;
+  transform.position = position;
+  transform.origin = origin;
+  transform.rotate = rotate;
+  transform.scale = scale;
+  spdlog::info("EntitySync: forwarding entity {} edit to authority {}",
+               entityID,
+               authorityID_.load());
+  queueWorldMessage(encodeWorldEntityEdit(
+    authorityID_.load(), peer->connectID, transform));
+}
+
+void
+Client::applyWorldEntityTransform(const WorldSyncEntityTransform& transform)
+{
+  if (!registry) {
+    return;
+  }
+  const entt::entity entity = static_cast<entt::entity>(transform.entityID);
+  if (!registry->valid(entity) || !registry->any_of<Positionable>(entity) ||
+      !registry->any_of<Persistable>(entity)) {
+    return;
+  }
+  auto& positionable = registry->get<Positionable>(entity);
+  positionable.pos = transform.position;
+  positionable.origin = transform.origin;
+  positionable.rotate = transform.rotate;
+  positionable.scale = transform.scale;
+  positionable.damage();
+}
+
+void
+Client::tickEntitySync()
+{
+  if (!isWorldAuthority() || !registry || peer == nullptr) {
+    return;
+  }
+  const double now = nowSeconds();
+  if (now < nextEntityScan_) {
+    return;
+  }
+  nextEntityScan_ = now + 0.05; // ~20 Hz is plenty for scene props
+
+  static double lastLog = 0.0;
+  for (auto [entity, positionable, persistable] :
+       registry->view<Positionable, Persistable>().each()) {
+    (void)persistable;
+    const uint32_t id = static_cast<uint32_t>(entity);
+    SyncedTransform next;
+    next.position = positionable.pos;
+    next.origin = positionable.origin;
+    next.rotate = positionable.rotate;
+    next.scale = positionable.scale;
+
+    auto it = syncedTransforms_.find(id);
+    if (it == syncedTransforms_.end()) {
+      syncedTransforms_.emplace(id, next);
+      continue;
+    }
+    const auto& current = it->second;
+    if (current.position == next.position && current.origin == next.origin &&
+        current.rotate == next.rotate && current.scale == next.scale) {
+      continue;
+    }
+    it->second = next;
+
+    WorldSyncEntityTransform transform;
+    transform.entityID = id;
+    transform.position = next.position;
+    transform.origin = next.origin;
+    transform.rotate = next.rotate;
+    transform.scale = next.scale;
+    queueWorldMessage(
+      encodeWorldEntityTransform(peer->connectID, ++worldSeq_, transform));
+    if (now - lastLog > 1.0) {
+      lastLog = now;
+      spdlog::info("EntitySync: entity {} -> ({:.2f}, {:.2f}, {:.2f})",
+                   id,
+                   next.position.x,
+                   next.position.y,
+                   next.position.z);
+    }
+  }
+}
+
+void
+Client::sendWorldEntitySnapshot(uint32_t targetOwner)
+{
+  if (!registry) {
+    return;
+  }
+  std::vector<WorldSyncEntityTransform> transforms;
+  for (auto [entity, positionable, persistable] :
+       registry->view<Positionable, Persistable>().each()) {
+    (void)persistable;
+    WorldSyncEntityTransform transform;
+    transform.entityID = static_cast<uint32_t>(entity);
+    transform.position = positionable.pos;
+    transform.origin = positionable.origin;
+    transform.rotate = positionable.rotate;
+    transform.scale = positionable.scale;
+    transforms.push_back(transform);
+  }
+  queueWorldMessage(encodeWorldEntitySnapshot(
+    targetOwner,
+    peer != nullptr ? peer->connectID : 0,
+    worldSeq_,
+    transforms));
+}
+
 void
 Client::handleWorldSync(const uint8_t* data, std::size_t size)
 {
@@ -2797,7 +2950,14 @@ Client::handleWorldSync(const uint8_t* data, std::size_t size)
     authorityID_.store(authority);
     if (changed) {
       spdlog::info("MultiPlayer: world authority is now {}", authority);
-      if (authority != peer->connectID) {
+      syncedTransforms_.clear();
+      nextEntityScan_ = 0.0;
+      if (authority == peer->connectID) {
+        // We just took over: publish the current scene transform baseline so
+        // existing peers converge without waiting for individual edits.
+        entitySyncPrimed_ = false;
+        sendWorldEntitySnapshot(0);
+      } else {
         lastAppliedWorldSeq_ = 0;
         requestWorldSnapshot();
       }
@@ -2849,6 +3009,26 @@ Client::handleWorldSync(const uint8_t* data, std::size_t size)
         queueWorldMessage(
           encodeWorldClearPositions(peer->connectID, ++worldSeq_, positions));
       }
+    } else if (header.type == WorldSyncType::EntityMove) {
+      uint32_t entityID = 0;
+      glm::vec3 delta{ 0.0f };
+      float unitsPerSecond = 1.0f;
+      if (decodeWorldEntityMove(
+            data, size, entityID, delta, unitsPerSecond) &&
+          registry && isSyncedEntity(entityID)) {
+        systems::translate(registry,
+                           static_cast<entt::entity>(entityID),
+                           delta,
+                           unitsPerSecond);
+      }
+    } else if (header.type == WorldSyncType::EntityTransform) {
+      WorldSyncEntityTransform transform;
+      if (decodeWorldEntityTransform(data, size, transform) &&
+          isSyncedEntity(transform.entityID)) {
+        applyWorldEntityTransform(transform);
+        spdlog::info("EntitySync: authority applied forwarded edit for {}",
+                     transform.entityID);
+      }
     }
     return;
   }
@@ -2896,6 +3076,12 @@ Client::handleWorldSync(const uint8_t* data, std::size_t size)
         applyWorldClearPositions(positions);
         lastAppliedWorldSeq_ = header.seq;
       }
+    } else if (header.type == WorldSyncType::EntityTransform) {
+      WorldSyncEntityTransform transform;
+      if (decodeWorldEntityTransform(data, size, transform)) {
+        applyWorldEntityTransform(transform);
+        lastAppliedWorldSeq_ = header.seq;
+      }
     }
     return;
   }
@@ -2923,6 +3109,25 @@ Client::handleWorldSync(const uint8_t* data, std::size_t size)
     lastAppliedWorldSeq_ = seq;
     spdlog::info("MultiPlayer: applied world snapshot ({} voxels, seq {})",
                  voxels.size(),
+                 seq);
+    return;
+  }
+
+  if (header.type == WorldSyncType::EntitySnapshot &&
+      header.targetOwner == peer->connectID && header.senderID == authority) {
+    uint64_t seq = 0;
+    std::vector<WorldSyncEntityTransform> transforms;
+    if (!decodeWorldEntitySnapshot(data, size, seq, transforms)) {
+      return;
+    }
+    for (const auto& transform : transforms) {
+      applyWorldEntityTransform(transform);
+    }
+    if (seq > lastAppliedWorldSeq_) {
+      lastAppliedWorldSeq_ = seq;
+    }
+    spdlog::info("MultiPlayer: applied entity snapshot ({} entities, seq {})",
+                 transforms.size(),
                  seq);
   }
 }
