@@ -5,6 +5,7 @@
 #include "glm/ext/quaternion_trigonometric.hpp"
 #include "glm/gtc/quaternion.hpp"
 #include "model.h"
+#include "remote_app.h"
 #include "screen.h"
 #include "renderer.h"
 #include "wayland_app.h"
@@ -443,6 +444,101 @@ Space::raycastAppFromScreen(float mouseX,
                            camera->getProjectionMatrix(true),
                            camera->getViewMatrix());
   return raycastApp(ray, distLimit);
+}
+
+optional<AppRayHit>
+Space::raycastRemoteApp(const Ray& ray, float distLimit)
+{
+  if (!registry) {
+    return std::nullopt;
+  }
+
+  optional<AppRayHit> bestHit;
+  auto view = registry->view<MultiPlayer::RemoteApp::Component, Positionable>();
+  for (auto&& [entity, component, positionable] : view.each()) {
+    auto* app = component.app.get();
+    if (!app || app->getWidth() <= 0 || app->getHeight() <= 0) {
+      continue;
+    }
+    if (positionable.damaged) {
+      positionable.update();
+    }
+
+    const glm::mat4 heightScalar = app->getHeightScalar();
+    const glm::mat4 localToWorld = positionable.modelMatrix * heightScalar;
+    const glm::mat4 worldToLocal = glm::inverse(localToWorld);
+    glm::vec3 localOrigin =
+      glm::vec3(worldToLocal * glm::vec4(ray.origin, 1.0f));
+    glm::vec3 localDirection =
+      glm::vec3(worldToLocal * glm::vec4(glm::normalize(ray.direction), 0.0f));
+    if (!std::isfinite(localDirection.x) ||
+        !std::isfinite(localDirection.y) ||
+        !std::isfinite(localDirection.z)) {
+      continue;
+    }
+    if (std::abs(localDirection.z) <= 0.08f) {
+      continue;
+    }
+    const float localDistance = -localOrigin.z / localDirection.z;
+    if (!std::isfinite(localDistance) || localDistance <= 0.0f) {
+      continue;
+    }
+
+    const float halfWidth = kAppQuadHalfWidth;
+    const float halfHeight = appQuadHalfHeight();
+    const glm::vec3 localHit =
+      localOrigin + (localDirection * localDistance);
+    if (!std::isfinite(localHit.x) || !std::isfinite(localHit.y) ||
+        localHit.x < -halfWidth || localHit.x > halfWidth ||
+        localHit.y < -halfHeight || localHit.y > halfHeight) {
+      continue;
+    }
+
+    const glm::vec3 worldHit =
+      glm::vec3(localToWorld * glm::vec4(localHit, 1.0f));
+    const float worldDistance = glm::length(worldHit - ray.origin);
+    if (!std::isfinite(worldDistance) || worldDistance <= 0.0f ||
+        worldDistance > distLimit) {
+      continue;
+    }
+    if (bestHit.has_value() && bestHit->distance <= worldDistance) {
+      continue;
+    }
+
+    float u = (localHit.x + halfWidth) / (halfWidth * 2.0f);
+    float v = (localHit.y + halfHeight) / (halfHeight * 2.0f);
+    u = std::clamp(u, 0.0f, 1.0f);
+    v = std::clamp(v, 0.0f, 1.0f);
+
+    AppRayHit hit;
+    hit.entity = entity;
+    hit.worldPoint = worldHit;
+    hit.distance = worldDistance;
+    hit.surfacePixels =
+      glm::vec2(u * static_cast<float>(app->getWidth()),
+                (1.0f - v) * static_cast<float>(app->getHeight()));
+    bestHit = hit;
+  }
+  return bestHit;
+}
+
+optional<AppRayHit>
+Space::raycastRemoteAppFromScreen(float mouseX,
+                                  float mouseY,
+                                  float screenWidth,
+                                  float screenHeight,
+                                  float distLimit)
+{
+  if (!camera || screenWidth <= 0.0f || screenHeight <= 0.0f) {
+    return std::nullopt;
+  }
+  Ray ray = createMouseRay(mouseX,
+                           mouseY,
+                           screenWidth,
+                           screenHeight,
+                           camera->getProjectionMatrix(true),
+                           camera->getViewMatrix());
+  return raycastRemoteApp(ray, distLimit);
 }
 
 size_t

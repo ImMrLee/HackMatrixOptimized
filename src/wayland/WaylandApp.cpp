@@ -10,6 +10,7 @@ extern "C" {
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_seat.h>
 #define class class_
 #include <wlr/xwayland.h>
@@ -21,6 +22,8 @@ extern "C" {
 #include <glm/gtc/matrix_transform.hpp>
 #include "screen.h"
 #include "components/Bootable.h"
+#include "input_activity.h"
+#include "time_utils.h"
 #include <cstdlib>
 #ifndef EGL_EGLEXT_PROTOTYPES
 #define EGL_EGLEXT_PROTOTYPES
@@ -54,6 +57,16 @@ recomputeHeightScaler(double width, double height)
   float currentRatio = static_cast<float>(height / width);
   float scaleFactor = currentRatio / standardRatio;
   return glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, scaleFactor, 1.0f));
+}
+
+static uint32_t
+input_time_msec()
+{
+  return static_cast<uint32_t>(
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch())
+      .count() &
+    0xffffffff);
 }
 
 // Minimal declaration to import dmabuf into a GL texture without dragging in
@@ -299,6 +312,123 @@ WaylandApp::takeInputFocus()
     wlr_seat_pointer_notify_frame(seat);
     update_pointer_constraint(static_cast<WlrServer*>(seat ? seat->data : nullptr), seat_surface);
   }
+}
+
+void
+WaylandApp::injectPointerMotion(double x, double y)
+{
+  if (!seat || !seat_surface) {
+    return;
+  }
+  if (seat->pointer_state.focused_surface != seat_surface) {
+    const double now = nowSeconds();
+    const double last = input_activity::lastLocalPointer.load();
+    if (last > 0.0 && now - last < 0.75) {
+      // The owner is actively using the pointer; do not steal focus.
+      return;
+    }
+    wlr_seat_pointer_notify_enter(seat, seat_surface, x, y);
+  }
+  const uint32_t time = input_time_msec();
+  wlr_seat_pointer_notify_motion(seat, time, x, y);
+  wlr_seat_pointer_notify_frame(seat);
+}
+
+void
+WaylandApp::injectPointerButton(std::uint32_t button, bool pressed)
+{
+  if (!seat || !seat_surface) {
+    return;
+  }
+  if (seat->pointer_state.focused_surface != seat_surface) {
+    const double now = nowSeconds();
+    const double last = input_activity::lastLocalPointer.load();
+    if (last > 0.0 && now - last < 0.75) {
+      return;
+    }
+    wlr_seat_pointer_notify_enter(seat, seat_surface, 0, 0);
+  }
+  const uint32_t time = input_time_msec();
+  wlr_seat_pointer_notify_button(
+    seat,
+    time,
+    button,
+    pressed ? WL_POINTER_BUTTON_STATE_PRESSED
+            : WL_POINTER_BUTTON_STATE_RELEASED);
+  wlr_seat_pointer_notify_frame(seat);
+}
+
+void
+WaylandApp::injectPointerAxis(double delta,
+                              std::int32_t deltaDiscrete,
+                              std::uint32_t source,
+                              std::uint32_t orientation)
+{
+  if (!seat || !seat_surface) {
+    return;
+  }
+  if (seat->pointer_state.focused_surface != seat_surface) {
+    const double now = nowSeconds();
+    const double last = input_activity::lastLocalPointer.load();
+    if (last > 0.0 && now - last < 0.75) {
+      return;
+    }
+    wlr_seat_pointer_notify_enter(seat, seat_surface, 0, 0);
+  }
+  const uint32_t time = input_time_msec();
+  wlr_seat_pointer_notify_axis(
+    seat,
+    time,
+    static_cast<wl_pointer_axis>(orientation),
+    delta,
+    deltaDiscrete,
+    static_cast<wl_pointer_axis_source>(source),
+    WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+  wlr_seat_pointer_notify_frame(seat);
+}
+
+void
+WaylandApp::injectKey(std::uint32_t keycode, bool pressed)
+{
+  if (!seat || !seat_surface) {
+    return;
+  }
+  // Linux evdev keycodes are bounded; reject garbage from the network before
+  // handing it to wlroots/xkb.
+  if (keycode > 0x2ff) {
+    return;
+  }
+  if (seat->keyboard_state.focused_surface != seat_surface) {
+    const double now = nowSeconds();
+    const double last = input_activity::lastLocalKeyboard.load();
+    if (last > 0.0 && now - last < 0.75) {
+      // The owner is typing locally; do not steal keyboard focus.
+      return;
+    }
+  }
+  wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat);
+  if (keyboard != nullptr) {
+    wlr_seat_set_keyboard(seat, keyboard);
+    if (seat->keyboard_state.focused_surface != seat_surface) {
+      wlr_seat_keyboard_notify_enter(seat,
+                                     seat_surface,
+                                     keyboard->keycodes,
+                                     keyboard->num_keycodes,
+                                     &keyboard->modifiers);
+      wlr_seat_keyboard_notify_modifiers(seat, &keyboard->modifiers);
+    }
+  } else if (seat->keyboard_state.focused_surface != seat_surface) {
+    // Headless/test seats may not have a physical keyboard. Still establish
+    // keyboard focus so injected key events reach the target surface.
+    wlr_keyboard_modifiers modifiers{};
+    wlr_seat_keyboard_notify_enter(
+      seat, seat_surface, nullptr, 0, &modifiers);
+  }
+  wlr_seat_keyboard_notify_key(
+    seat,
+    input_time_msec(),
+    keycode,
+    pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 }
 
 void

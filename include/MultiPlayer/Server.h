@@ -4,6 +4,7 @@
 #include <thread>
 #include <atomic>
 #include <glm/glm.hpp>
+#include "scene_fingerprint.h"
 
 namespace MultiPlayer {
 
@@ -16,7 +17,13 @@ struct PlayerUpdate
 
 enum CHANNEL_TYPE
 {
-  PLAYER_UPDATE = 1
+  PLAYER_UPDATE = 1,
+  PLAYER_JOIN = 2,
+  SCENE_INFO = 3,
+  WINDOW_STREAM = 4,
+  WINDOW_CONTROL = 5,
+  WINDOW_VIDEO = 6,
+  WEBRTC_SIGNAL = 7
 };
 
 class Server
@@ -36,6 +43,8 @@ private:
   std::thread pollThread;
   PlayerUpdate getPlayerUpdateFromEvent(ENetEvent&);
   void broadcastPlayerUpdate(PlayerUpdate);
+  void broadcastSceneInfo(uint32_t playerID,
+                          const SceneFingerprint& fingerprint);
 };
 
 }

@@ -120,7 +120,12 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
       renderEntities();
       ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Multiplayer")) {
+    const bool forceMultiplayerTab =
+      std::getenv("HACKMATRIX_IMGUI_MULTIPLAYER_TAB") != nullptr;
+    if (ImGui::BeginTabItem("Multiplayer",
+                            nullptr,
+                            forceMultiplayerTab ? ImGuiTabItemFlags_SetSelected
+                                                : 0)) {
       gui.Render();
       ImGui::EndTabItem();
     }

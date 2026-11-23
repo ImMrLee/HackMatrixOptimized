@@ -1,4 +1,5 @@
 #pragma once
+#include <exception>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,6 +33,32 @@ public:
 
     return (*current)[parts.back()].get_value<T>();
   }
+
+  // Safe lookup for newly added optional settings.
+  template<typename T>
+  T get_or(const std::string& key_path, T fallback)
+  {
+    try {
+      auto parts = split_path(key_path);
+      fkyaml::node* current = &config;
+      for (size_t i = 0; i + 1 < parts.size(); ++i) {
+        if (!current->is_mapping() || !current->contains(parts[i])) {
+          return fallback;
+        }
+        current = &(*current)[parts[i]];
+      }
+      if (!current->is_mapping() || !current->contains(parts.back())) {
+        return fallback;
+      }
+      return (*current)[parts.back()].get_value<T>();
+    } catch (const std::exception&) {
+      return fallback;
+    }
+  }
+
+  // Rewrites a flat integer key in config.yaml (preserving the rest of the
+  // file) and updates the in-memory node.
+  void setIntAndSave(const std::string& key, int value);
 
   std::vector<std::string> get_keys(const std::string& key_path);
 };

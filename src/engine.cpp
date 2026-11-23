@@ -215,14 +215,82 @@ Engine::wire()
   }
 }
 
+void
+Engine::requestMultiplayerConnect(std::string host, int port)
+{
+  std::lock_guard<std::mutex> lock(multiplayerCommandMutex_);
+  PendingMultiplayerCommand command;
+  command.type = PendingMultiplayerCommand::Type::Connect;
+  command.host = std::move(host);
+  command.port = port;
+  multiplayerCommands_.push_back(std::move(command));
+}
+
+void
+Engine::requestMultiplayerDisconnect()
+{
+  std::lock_guard<std::mutex> lock(multiplayerCommandMutex_);
+  PendingMultiplayerCommand command;
+  command.type = PendingMultiplayerCommand::Type::Disconnect;
+  multiplayerCommands_.push_back(std::move(command));
+}
+
+void
+Engine::drainMultiplayerCommands()
+{
+  std::vector<PendingMultiplayerCommand> commands;
+  {
+    std::lock_guard<std::mutex> lock(multiplayerCommandMutex_);
+    commands.swap(multiplayerCommands_);
+  }
+  for (auto& command : commands) {
+    if (command.type == PendingMultiplayerCommand::Type::Connect) {
+      if (client && !client->isDisconnected()) {
+        continue;
+      }
+      if (client) {
+        client.reset();
+      }
+      multiplayerError_.clear();
+      auto candidate = std::make_shared<MultiPlayer::Client>(registry);
+      if (!candidate->connect(command.host, command.port)) {
+        multiplayerError_ = "Could not start connection to " + command.host +
+                            ":" + std::to_string(command.port);
+        spdlog::warn("Engine: {}", multiplayerError_);
+        continue;
+      }
+      client = std::move(candidate);
+    } else if (command.type ==
+               PendingMultiplayerCommand::Type::Disconnect) {
+      if (client) {
+        client->disconnect();
+      }
+    }
+  }
+}
+
 void Engine::multiplayerClientIteration(double frameStart) {
+
+  drainMultiplayerCommands();
 
   static double lastPlayerUpdate = 0;
   if (client) {
     client->poll();
+    if (client->isDisconnected()) {
+      if (!client->connectionError().empty()) {
+        multiplayerError_ = client->connectionError();
+      }
+      client.reset();
+    } else {
+      // Capture/encode shared windows. This runs after renderer->render(), so
+      // the GL context is current and the window textures hold this frame.
+      client->tickWindowStreams();
+      client->tickWebRtc();
+    }
   }
 
-  if (client && frameStart - lastPlayerUpdate > 1.0 / 20.0) {
+  if (client && client->isConnected() &&
+      frameStart - lastPlayerUpdate > 1.0 / 20.0) {
     client->sendPlayer(camera->position, camera->front);
     lastPlayerUpdate = frameStart;
   }

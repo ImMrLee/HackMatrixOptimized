@@ -61,6 +61,15 @@ namespace WindowManager {
                                              float screenWidth,
                                              float screenHeight,
                                              float distLimit = 20.0f);
+    // Remote/shared windows are kept out of the normal app selection path so
+    // the WindowManager never tries to focus a non-Wayland surface.
+    optional<AppRayHit> raycastRemoteApp(const Ray& ray,
+                                         float distLimit = 20.0f);
+    optional<AppRayHit> raycastRemoteAppFromScreen(float mouseX,
+                                                   float mouseY,
+                                                   float screenWidth,
+                                                   float screenHeight,
+                                                   float distLimit = 20.0f);
 
     size_t getNumPositionableApps();
 

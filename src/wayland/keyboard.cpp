@@ -7,6 +7,8 @@ extern "C" {
 
 #include "wayland/keyboard.h"
 #include "wayland/wlr_compositor.h"
+#include "input_activity.h"
+#include "time_utils.h"
 
 
 
@@ -42,6 +44,22 @@ process_key_sym(WlrServer* server,
 
   // Feed the ImGui debug overlay (text input) before WM/seat handling.
   server->engine->updateImGuiKey(sym, pressed);
+
+  if (auto client = server->engine->getClient();
+      client && client->isControllingRemote()) {
+    if (sym == XKB_KEY_Escape) {
+      // Consume both press and release so releasing control does not fall
+      // through to the local quit shortcut.
+      if (!pressed) {
+        client->releaseRemoteControl();
+      }
+      return;
+    }
+    if (keycode != 0) {
+      client->sendRemoteKey(keycode, pressed);
+    }
+    return;
+  }
 
   uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
 
@@ -86,6 +104,7 @@ handle_keyboard_key(wl_listener* listener, void* data)
     wl_container_of(listener, static_cast<WlrKeyboardHandle*>(nullptr), key);
   auto* server = handle->server;
   auto* event = static_cast<wlr_keyboard_key_event*>(data);
+  input_activity::lastLocalKeyboard.store(nowSeconds());
   // wlroots key events carry a hardware/libinput keycode. Add 8 only for xkb
   // lookup; keep the raw code for notifying the seat.
   uint32_t xkb_keycode = event->keycode + 8;

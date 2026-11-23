@@ -1,0 +1,7 @@
+# Third-party one-time allocations that are never released.
+# The NVENC path initializes CUDA lazily; libcuda keeps global state alive for
+# the process lifetime. This is not a project leak.
+leak:libcuda.so
+leak:libavcodec.so
+# CUDA/NVENC internal synchronization primitives allocated via libc.
+leak:pthread_cond_broadcast

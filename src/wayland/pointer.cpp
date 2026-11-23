@@ -3,6 +3,8 @@
 #include "engine.h"
 #include "wayland/wlr_compositor.h"
 #include "WindowManager/Space.h"
+#include "input_activity.h"
+#include "time_utils.h"
 extern "C" {
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_cursor.h>
@@ -32,6 +34,42 @@ output_local_pointer(WlrServer* server, wlr_output* output)
     y -= static_cast<double>(box.y);
   }
   return { x, y };
+}
+
+static MultiPlayer::Client*
+remoteWindowController(WlrServer* server)
+{
+  if (!server || !server->engine) {
+    return nullptr;
+  }
+  auto client = server->engine->getClient();
+  if (!client || !client->isControllingRemote()) {
+    return nullptr;
+  }
+  return client.get();
+}
+
+static std::optional<WindowManager::AppRayHit>
+remoteWindowUnderPointer(WlrServer* server)
+{
+  if (!server || !server->engine || !server->primary_output) {
+    return std::nullopt;
+  }
+  auto wm = server->engine->getWindowManager();
+  if (!wm) {
+    return std::nullopt;
+  }
+  auto space = wm->getSpace();
+  if (!space) {
+    return std::nullopt;
+  }
+  auto pointer = output_local_pointer(server, server->primary_output);
+  return space->raycastRemoteAppFromScreen(
+    static_cast<float>(pointer.first),
+    static_cast<float>(pointer.second),
+    static_cast<float>(server->primary_output->width),
+    static_cast<float>(server->primary_output->height),
+    20.0f);
 }
 
 static void
@@ -469,6 +507,7 @@ handle_pointer_motion(wl_listener* listener, void* data)
   auto* handle =
     wl_container_of(listener, static_cast<WlrPointerHandle*>(nullptr), motion);
   auto* event = static_cast<wlr_pointer_motion_event*>(data);
+  input_activity::lastLocalPointer.store(nowSeconds());
   handle->server->input.delta_x += event->delta_x;
   handle->server->input.delta_y += event->delta_y;
   if (handle->server->relative_pointer_manager && handle->server->seat) {
@@ -496,6 +535,18 @@ handle_pointer_motion(wl_listener* listener, void* data)
       handle->server->pointer_y,
       handle->server->input.mouse_buttons);
   }
+
+  if (auto* client = remoteWindowController(handle->server);
+      client != nullptr && handle->server->engine &&
+      !handle->server->engine->imguiWantsMouse()) {
+    if (auto hit = remoteWindowUnderPointer(handle->server);
+        hit.has_value() && client->isControllingRemoteEntity(hit->entity)) {
+      client->sendRemotePointerMotion(hit->surfacePixels.x,
+                                      hit->surfacePixels.y);
+    }
+    return;
+  }
+
   bool focusRequested = wayland_pointer_focus_requested(handle->server);
   if (hover_focus_enabled(handle->server)) {
     if (auto hovered = pick_hovered_surface(handle->server)) {
@@ -530,6 +581,7 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
   auto* handle = wl_container_of(
     listener, static_cast<WlrPointerHandle*>(nullptr), motion_abs);
   auto* event = static_cast<wlr_pointer_motion_absolute_event*>(data);
+  input_activity::lastLocalPointer.store(nowSeconds());
   if (handle->server->input.have_abs) {
     // Wayland absolute motion arrives normalized to [0,1]. Scale it back into
     // output-space units so nested sessions don't feel like they only have a
@@ -566,6 +618,18 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
       handle->server->pointer_y,
       handle->server->input.mouse_buttons);
   }
+
+  if (auto* client = remoteWindowController(handle->server);
+      client != nullptr && handle->server->engine &&
+      !handle->server->engine->imguiWantsMouse()) {
+    if (auto hit = remoteWindowUnderPointer(handle->server);
+        hit.has_value() && client->isControllingRemoteEntity(hit->entity)) {
+      client->sendRemotePointerMotion(hit->surfacePixels.x,
+                                      hit->surfacePixels.y);
+    }
+    return;
+  }
+
   bool focusRequested = wayland_pointer_focus_requested(handle->server);
   if (hover_focus_enabled(handle->server)) {
     if (auto hovered = pick_hovered_surface(handle->server)) {
@@ -600,6 +664,20 @@ handle_pointer_axis(wl_listener* listener, void* data)
   auto* handle =
     wl_container_of(listener, static_cast<WlrPointerHandle*>(nullptr), axis);
   auto* event = static_cast<wlr_pointer_axis_event*>(data);
+  input_activity::lastLocalPointer.store(nowSeconds());
+
+  if (auto* client = remoteWindowController(handle->server);
+      client != nullptr && handle->server->engine &&
+      !handle->server->engine->imguiWantsMouse()) {
+    if (auto hit = remoteWindowUnderPointer(handle->server);
+        hit.has_value() && client->isControllingRemoteEntity(hit->entity)) {
+      client->sendRemotePointerAxis(event->delta,
+                                    event->delta_discrete,
+                                    event->source,
+                                    event->orientation);
+    }
+    return;
+  }
 
   wlr_surface* target = nullptr;
   if (handle->server && handle->server->seat) {
@@ -633,6 +711,7 @@ void handle_pointer_button(wl_listener* listener, void* data)
   auto* handle =
     wl_container_of(listener, static_cast<WlrPointerHandle*>(nullptr), button);
   auto* event = static_cast<wlr_pointer_button_event*>(data);
+  input_activity::lastLocalPointer.store(nowSeconds());
   bool button_consumed_by_controls = false;
   // Feed the ImGui overlay first. When it owns the mouse, swallow the click so
   // it does not also reach game controls or a focused client.
@@ -657,6 +736,25 @@ void handle_pointer_button(wl_listener* listener, void* data)
                                handle->server->input.mouse_buttons);
     imgui_captured = engine->imguiWantsMouse();
   }
+  if (!imgui_captured) {
+    if (auto* client = remoteWindowController(handle->server)) {
+      const bool pressed = static_cast<uint32_t>(event->state) ==
+                           static_cast<uint32_t>(WLR_BUTTON_PRESSED);
+      if (pressed) {
+        if (auto hit = remoteWindowUnderPointer(handle->server);
+            hit.has_value() &&
+            client->isControllingRemoteEntity(hit->entity)) {
+          client->sendRemotePointerButton(event->button, true);
+        } else if (event->button == BTN_LEFT) {
+          client->releaseRemoteControl();
+        }
+      } else {
+        client->sendRemotePointerButton(event->button, false);
+      }
+      return;
+    }
+  }
+
   bool wayland_focus_requested =
     wayland_pointer_focus_requested(handle->server);
   wlr_surface* pointer_surface = nullptr;

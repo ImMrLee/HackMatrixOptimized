@@ -6,16 +6,19 @@
 #include <vector>
 #include <memory>
 #include <optional>
+#include <string>
 
 class EntityRegistry : public entt::registry
 {
   std::shared_ptr<SQLite::Database> db;
+  std::string databaseFile;
   std::vector<std::shared_ptr<SQLPersister>> persisters;
   std::map<int, entt::entity> entityLocator;
 
 public:
   EntityRegistry();
   SQLite::Database &getDatabase();
+  const std::string& getDatabaseFile() const { return databaseFile; }
   void addPersister(std::shared_ptr<SQLPersister>);
   void depersist(entt::entity);
   entt::entity createPersistent();

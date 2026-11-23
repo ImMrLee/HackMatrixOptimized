@@ -14,7 +14,9 @@
 #endif
 
 #include <memory>
+#include <mutex>
 #include <spdlog/common.h>
+#include <string>
 #include <vector>
 
 struct EngineOptions {
@@ -55,10 +57,28 @@ class Engine
   void initializeMemberObjs();
   void multiplayerClientIteration(double frameStart);
 
+  struct PendingMultiplayerCommand
+  {
+    enum class Type
+    {
+      Connect,
+      Disconnect,
+    };
+    Type type = Type::Connect;
+    std::string host;
+    int port = 0;
+  };
+  std::mutex multiplayerCommandMutex_;
+  std::vector<PendingMultiplayerCommand> multiplayerCommands_;
+  std::string multiplayerError_;
+  void drainMultiplayerCommands();
+
 public:
   Engine(char** envp, EngineOptions options = {});
   ~Engine();
   shared_ptr<EntityRegistry> getRegistry();
+  shared_ptr<MultiPlayer::Client> getClient() { return client; }
+  shared_ptr<MultiPlayer::Server> getServer() { return server; }
   Camera* getCamera() { return camera.get(); }
   Renderer* getRenderer() { return renderer.get(); }
   Api* getApi() { return api.get(); }
@@ -69,6 +89,11 @@ public:
   void frame();
   void registerServer(shared_ptr<MultiPlayer::Server>);
   void registerClient(shared_ptr<MultiPlayer::Client>);
+  // Thread-safe requests used by the web UI. They are drained on the render
+  // thread in multiplayerClientIteration().
+  void requestMultiplayerConnect(std::string host, int port);
+  void requestMultiplayerDisconnect();
+  const std::string& multiplayerError() const { return multiplayerError_; }
   void updateImGuiPointer(float xPixels, float yPixels, const bool buttons[3]);
   // Forward a real keyboard event to the ImGui debug overlay (text input).
   void updateImGuiKey(xkb_keysym_t sym, bool pressed);

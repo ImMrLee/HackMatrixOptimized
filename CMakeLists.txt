@@ -461,6 +461,10 @@ if(WLROOTS_SYSTEM_AVAILABLE)
   matrix_generate_wlroots_private_config()
 endif()
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
+pkg_check_modules(FFMPEG REQUIRED libavcodec libavutil libswscale)
+pkg_check_modules(GST REQUIRED
+  gstreamer-1.0 gstreamer-webrtc-1.0 gstreamer-app-1.0
+  gstreamer-video-1.0 gstreamer-sdp-1.0)
 
 execute_process(
   COMMAND "${PROTOC_EXECUTABLE}" --version
@@ -780,9 +784,15 @@ target_link_options(matrix_core PUBLIC
   "-Wl,--as-needed"
 )
 
+target_include_directories(matrix_core PUBLIC
+  ${FFMPEG_INCLUDE_DIRS}
+  ${GST_INCLUDE_DIRS})
+
 target_link_libraries(matrix_core PUBLIC
   ${WLROOTS_LOCAL_LIBRARIES}
   ${PROTOBUF_LIBRARIES}
+  ${FFMPEG_LIBRARIES}
+  ${GST_LIBRARIES}
   zmq
   xcb
   pixman-1
@@ -884,6 +894,12 @@ if(MATRIX_BUILD_TESTS)
       tests/voxelRaycast.cpp
       tests/voxelSpace.cpp
       tests/imguiKeymap.cpp
+      tests/sceneFingerprint.cpp
+      tests/multiplayerClient.cpp
+      tests/windowShareProtocol.cpp
+      tests/webrtcProtocol.cpp
+      tests/configPersistence.cpp
+      tests/videoCodec.cpp
     )
     target_link_libraries(matrix_unit_tests PRIVATE
       matrix_core
@@ -901,7 +917,7 @@ if(MATRIX_BUILD_TESTS)
       # The system libprotobuf is uninstrumented, so mixing it with annotated
       # STL containers yields false container-overflow reports.
       set_tests_properties(matrix_unit_tests PROPERTIES
-        ENVIRONMENT "ASAN_OPTIONS=detect_container_overflow=0;UBSAN_OPTIONS=print_stacktrace=1")
+        ENVIRONMENT "ASAN_OPTIONS=detect_container_overflow=0;UBSAN_OPTIONS=print_stacktrace=1;LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
     endif()
 
     # Integration test that spawns the compositor through ./launch but has no

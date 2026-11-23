@@ -4,14 +4,14 @@
 #include "MultiPlayer/Client.h"
 #include "imgui.h"
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
-
-
 
 #include <thread>
 #include <fstream>
 #include <sstream>
 #include <enet/enet.h>
+#include <spdlog/spdlog.h>
 
 std::string read_file(const std::string& path) {
 	std::ifstream file(path, std::ios::binary);
@@ -40,16 +40,25 @@ namespace MultiPlayer {
 
 			return static_cast<int>(parsedPort);
 		}
+
+		bool parsePort(const std::string& value, int& port)
+		{
+			errno = 0;
+			char* end = nullptr;
+			const long parsed = std::strtol(value.c_str(), &end, 10);
+			if (errno != 0 || end == value.c_str() || *end != '\0' ||
+			    parsed <= 0 || parsed > 65535) {
+				return false;
+			}
+			port = static_cast<int>(parsed);
+			return true;
+		}
 	}
 
 	WebGui::WebGui(Engine* engine)
-		: connect(false)
-		  , address("127.0.0.1")
-		  , port(readWebGuiPort())
-		  , engine(engine)
+		: port(readWebGuiPort())
+		, engine(engine)
 	{
-
-
 		CROW_ROUTE(app, "/")([](){
 				return read_file("src/MultiPlayer/WebGui.html");
 				});
@@ -58,34 +67,47 @@ namespace MultiPlayer {
 			([this, engine](const crow::request& req) {
 			 auto params = req.get_body_params();
 
-			 auto host = params.get("host");
-			 auto port = params.get("port");
+			 const char* hostValue = params.get("host");
+			 const char* portValue = params.get("port");
 
-			 if (!host || !port) {
-			 return crow::response(400, "missing host or port");
+			 if (!hostValue || !portValue || !*hostValue) {
+				 return crow::response(400, "missing host or port");
 			 }
 
-			 std::stringstream ss;
+			 int requestedPort = 0;
+			 if (!parsePort(portValue, requestedPort)) {
+				 return crow::response(400, "invalid port");
+			 }
 
-			client = std::make_shared<Client>(engine->getRegistry());
-			engine->registerClient(client);
-
-			// TODO:Investigate how the client is closed
-			client->connect(host, std::atoi(port));
-			if(client->isConnected()) {
-			 ss << "connected to ... <" << host << ">:<" << port << ">";
-			} else {
-			  ss << "failed to connect to ... <" << host << ">:<" << port << ">";
-		        }
-
-			 return crow::response{ss.str()};
+			 // The request is queued; the render thread owns ENet and all
+			 // Client lifetime/GL cleanup.
+			 engine->requestMultiplayerConnect(hostValue, requestedPort);
+			 return crow::response(202, "connection queued");
 			 });
-		serverThread = std::thread([this](){
+
+		serverThread = std::thread([this]() {
+			started.store(true);
+			try {
 				app.port(port).multithreaded().run();
-				});
+			} catch (const std::exception& error) {
+				spdlog::error("WebGui: server stopped: {}", error.what());
+			} catch (...) {
+				spdlog::error("WebGui: server stopped with unknown error");
+			}
+		});
 	}
 
-	WebGui::~WebGui() {}
+	WebGui::~WebGui()
+	{
+		// Give the thread a chance to enter run() so stop() is observed.
+		for (int i = 0; i < 100 && !started.load(); ++i) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		app.stop();
+		if (serverThread.joinable()) {
+			serverThread.join();
+		}
+	}
 
 	void WebGui::Render() {}
 }

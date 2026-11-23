@@ -340,8 +340,33 @@ Api::processBatchedRequest(BatchedRequest batchedRequest)
   };
 
   auto it = handlers.find(batchedRequest.request.type());
-  if (it != handlers.end()) {
+  if (it == handlers.end()) {
+    return;
+  }
+
+  // A single malformed request must not take down the request thread or leave
+  // the caller waiting forever for a response.
+  try {
     (this->*(it->second))(batchedRequest);
+  } catch (const std::exception& error) {
+    if (logger) {
+      logger->error("Api: request {} failed: {}",
+                    static_cast<int>(batchedRequest.request.type()),
+                    error.what());
+    }
+    ApiRequestResponse response;
+    response.set_requestid(batchedRequest.id);
+    response.set_success(false);
+    fulfillPendingResponse(batchedRequest.id, response);
+  } catch (...) {
+    if (logger) {
+      logger->error("Api: request {} failed with an unknown error",
+                    static_cast<int>(batchedRequest.request.type()));
+    }
+    ApiRequestResponse response;
+    response.set_requestid(batchedRequest.id);
+    response.set_success(false);
+    fulfillPendingResponse(batchedRequest.id, response);
   }
 }
 
@@ -371,6 +396,9 @@ Api::handleTurnKey(const BatchedRequest& batchedRequest)
 void
 Api::handlePlayerMove(const BatchedRequest& batchedRequest)
 {
+  if (!controls) {
+    return;
+  }
   auto playerMove = batchedRequest.request.playermove();
   glm::vec3 pos(playerMove.position().x(),
                 playerMove.position().y(),

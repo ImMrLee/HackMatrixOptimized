@@ -1,6 +1,7 @@
 #pragma once
 
 #include <imgui.h>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
@@ -15,8 +16,6 @@
 
 #include <crow.h>
 
-#include "./Client.h"
-#include "./Server.h"
 #include <thread>
 
 class Engine;
@@ -33,12 +32,9 @@ public:
 private:
   std::thread serverThread;
   crow::SimpleApp app;
-  bool connect;
-  std::string address;
+  std::atomic<bool> started{ false };
   int port;
   Engine* engine;
-  std::shared_ptr<MultiPlayer::Client> client;
-  std::shared_ptr<MultiPlayer::Server> server;
 };
 
 }

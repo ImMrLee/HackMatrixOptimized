@@ -28,7 +28,9 @@ jobs:
             libdrm libxkbcommon pixman mesa libglvnd lcms2 systemd-libs \
             seatd libdisplay-info libliftoff libinput libxcb \
             xcb-util-errors xcb-util-wm xcb-util-renderutil \
-            assimp fmt spdlog sqlite zeromq \
+            assimp fmt spdlog sqlite zeromq ffmpeg \
+            gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
+            gst-libav libnice \
             vulkan-icd-loader vulkan-headers hwdata glslang \
             libx11 xorg-xwayland
 

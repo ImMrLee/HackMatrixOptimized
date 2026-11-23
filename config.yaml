@@ -5,6 +5,8 @@ scriptable_editor_program: "vim"
 show_key_press_overlay: true
 fov: 45.0
 zFar: 400.0
+multiplayer_window_stream_fps: 5
+multiplayer_window_stream_quality: 65
 key_mappings:
   screenshot: "p"
   toggle_cursor: "f"

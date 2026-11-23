@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <unordered_set>
 
+#include "remote_app.h"
 #include "screen.h"
 #include "tracy/Tracy.hpp"
 #include "tracy/TracyOpenGL.hpp"
@@ -272,6 +273,25 @@ Renderer::renderApps()
       shader->setMatrix4("model", positionable.modelMatrix);
       glBindVertexArray(APP_VAO);
     }
+  }
+
+  // Remote/shared windows (F14c). These use the same in-world quad path as
+  // normal apps, but their pixels come from RemoteApp instead of a wlr_surface.
+  auto remoteApps =
+    registry->view<MultiPlayer::RemoteApp::Component, Positionable>();
+  for (auto [entity, comp, positionable] : remoteApps.each()) {
+    auto* app = comp.app.get();
+    if (!app) {
+      continue;
+    }
+    app->appTexture();
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, app->getTextureId());
+    shader->setBool("appTransparent", false);
+    shader->setMatrix4("model", positionable.modelMatrix);
+    shader->setMatrix4("bootableScale", app->getHeightScalar());
+    glBindVertexArray(APP_VAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
   }
 
   // Direct-render Wayland accessory apps (popups/menus) relative to their

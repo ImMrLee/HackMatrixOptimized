@@ -19,8 +19,14 @@ Everything is found through `pkg-config` and CMake. On Arch:
 sudo pacman -S --needed base-devel cmake git protobuf wayland wayland-protocols \
   libdrm libxkbcommon pixman mesa libglvnd lcms2 systemd-libs seatd \
   libdisplay-info libliftoff libinput libxcb xcb-util-errors xcb-util-wm \
-  xcb-util-renderutil assimp fmt spdlog sqlite zeromq gtest
+  xcb-util-renderutil assimp fmt spdlog sqlite zeromq ffmpeg \
+  gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
+  libnice gtest
 ```
+
+Window sharing uses GStreamer `webrtcbin`: `gst-plugins-bad` provides
+`webrtcbin`/`h264parse`, `gst-plugins-good` provides `rtpbin`/`rtph264pay`,
+`gst-libav` provides `avdec_h264`, and `libnice` provides ICE.
 
 `wlroots` is the one dependency that differs by distribution:
 
@@ -107,6 +113,13 @@ editor and multiplayer controls. It is enabled by default.
 | `HACKMATRIX_IMGUI_FLIP=0` | Do not mirror the overlay vertically (default: mirrored for the wlroots FBO) |
 | `HACKMATRIX_SCREENSHOT_FRAME=N` | Write `screenshots/<time>.png` on frame N (headless verification) |
 | `HACKMATRIX_SCREENSHOT_AFTER_MS=N` | Write a screenshot N ms after the first frame (useful when a client connects later) |
+| `HACKMATRIX_IMGUI_MULTIPLAYER_TAB=1` | Force the Multiplayer tab to be selected (UI screenshots/tests) |
+| `HACKMATRIX_DEBUG_MULTIPLAYER_CONNECT=host:port` | Auto-connect the Multiplayer panel once (headless UI tests) |
+| `HACKMATRIX_DEBUG_PREVIEW_FIRST_WINDOW=1` | Create a local loopback preview of the first window (headless UI tests) |
+| `HACKMATRIX_DEBUG_SHARE_FIRST_WINDOW=1` | Publish the first window once a matching peer is connected (headless tests) |
+| `HACKMATRIX_DEBUG_ALLOW_CONTROL_FIRST_WINDOW=1` | Also allow control for the auto-shared window (headless tests) |
+| `HACKMATRIX_DEBUG_TAKE_CONTROL_FIRST_REMOTE=1` | Request control of the first available remote window (headless tests) |
+| `HACKMATRIX_DEBUG_SEND_KEY_AFTER_CONTROL=1` | Send one `KEY_A` after control is granted (headless tests) |
 
 The overlay is rendered into the same GL context and framebuffer as the scene,
 from the wlroots output render callback. Mouse input is forwarded from the

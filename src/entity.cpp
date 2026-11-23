@@ -6,8 +6,8 @@
 
 EntityRegistry::EntityRegistry() {
 
-  auto dbFile = Config::singleton()->get<std::string>("database_file");
-  db = std::make_shared<SQLite::Database>(dbFile,
+  databaseFile = Config::singleton()->get<std::string>("database_file");
+  db = std::make_shared<SQLite::Database>(databaseFile,
                                           SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
 }
 

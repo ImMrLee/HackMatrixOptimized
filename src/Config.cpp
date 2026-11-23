@@ -126,3 +126,60 @@ Config::get_keys(const std::string& key_path)
 
   return keys;
 }
+
+void
+Config::setIntAndSave(const std::string& key, int value)
+{
+  if (configPath.empty()) {
+    throw std::runtime_error("HackMatrix config path is empty");
+  }
+
+  const fs::path path(configPath);
+  std::ifstream input(path);
+  if (!input.is_open()) {
+    throw std::runtime_error("Unable to open HackMatrix config: " +
+                             configPath);
+  }
+
+  std::vector<std::string> lines;
+  std::string line;
+  bool replaced = false;
+  const std::string prefix = key + ":";
+  while (std::getline(input, line)) {
+    std::string trimmed = line;
+    const auto first = trimmed.find_first_not_of(" \t");
+    if (first != std::string::npos) {
+      trimmed.erase(0, first);
+    }
+    if (!replaced && trimmed.rfind(prefix, 0) == 0) {
+      line = key + ": " + std::to_string(value);
+      replaced = true;
+    }
+    lines.push_back(line);
+  }
+  if (!replaced) {
+    lines.push_back(key + ": " + std::to_string(value));
+  }
+
+  fs::path temporary = path;
+  temporary += ".tmp";
+  std::ofstream output(temporary, std::ios::trunc);
+  if (!output.is_open()) {
+    throw std::runtime_error("Unable to write HackMatrix config: " +
+                             temporary.string());
+  }
+  for (const auto& entry : lines) {
+    output << entry << '\n';
+  }
+  output.close();
+
+  std::error_code ec;
+  fs::rename(temporary, path, ec);
+  if (ec) {
+    fs::remove(temporary, ec);
+    throw std::runtime_error("Unable to replace HackMatrix config: " +
+                             path.string());
+  }
+
+  config[key] = value;
+}

@@ -4,6 +4,7 @@
 #include <string>
 #include <atomic>
 #include <array>
+#include <cstdint>
 #include <optional>
 #ifndef EGL_EGLEXT_PROTOTYPES
 #define EGL_EGLEXT_PROTOTYPES
@@ -143,6 +144,16 @@ public:
   int getPID() override { return clientPid; }
 
   void close();
+
+  // Remote-control input injection (F14d). Coordinates are surface-local
+  // pixels; keycode uses the same raw evdev value as wlroots' key events.
+  void injectPointerMotion(double x, double y);
+  void injectPointerButton(std::uint32_t button, bool pressed);
+  void injectPointerAxis(double delta,
+                         std::int32_t deltaDiscrete,
+                         std::uint32_t source,
+                         std::uint32_t orientation);
+  void injectKey(std::uint32_t keycode, bool pressed);
 
 private:
   void handle_commit(wlr_surface* surface);
