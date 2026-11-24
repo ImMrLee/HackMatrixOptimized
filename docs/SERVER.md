@@ -30,6 +30,10 @@ Options:
   the server applies them, increments the sequence and broadcasts snapshots /
   deltas back. Late joiners receive a voxel + entity snapshot.
 - Maintains the runtime voxel overlay (`DynamicObjectSpace`) without GL.
+- Owns the player list: assigns a spawn point on connect, sends every existing
+  player state to a newcomer, broadcasts `PLAYER_JOIN`/`PLAYER_UPDATE`, and
+  broadcasts `PLAYER_LEAVE` (channel 9) on disconnect. Clients destroy the
+  corresponding avatar entity on leave.
 - Starts the existing ENet relay (`MultiPlayer::Server`), accepts players and
   reports connected/disconnected players and the online count.
 - Does **not** link OpenGL, wlroots, Wayland, X11, GStreamer or ImGui.
@@ -48,8 +52,10 @@ Options:
   `cp db/matrix.db /srv/hackmatrix/world.db`) so clients cannot overwrite it
   when they persist their local scene.
 
-Still missing: player/NPC state, admin commands, Model/Light lazy loading and
-the separate Arch package.
+Player movement is still client-reported (`PLAYER_UPDATE` is validated only for
+packet length; the server stores and broadcasts it). Input-based movement
+authority, NPCs, admin commands, Model/Light lazy loading and the separate Arch
+package remain.
 
 ## Why this shape
 

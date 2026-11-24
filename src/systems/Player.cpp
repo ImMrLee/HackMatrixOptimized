@@ -10,12 +10,43 @@ std::map<uint32_t, entt::entity> registeredPlayers;
 void
 registerPlayer(std::shared_ptr<EntityRegistry> registry, uint32_t connectionId)
 {
+  if (registeredPlayers.contains(connectionId)) {
+    return;
+  }
   auto entity = registry->create();
   registry->emplace<Positionable>(
     entity, glm::vec3(0), glm::vec3(0, 0.85, 0), glm::vec3(0), 0.3);
   registry->emplace<Model>(entity, "vox/hacker.obj");
   registeredPlayers.insert(std::make_pair(connectionId, entity));
 }
+void
+unregisterPlayer(std::shared_ptr<EntityRegistry> registry, uint32_t connectionId)
+{
+  auto it = registeredPlayers.find(connectionId);
+  if (it == registeredPlayers.end()) {
+    return;
+  }
+  const entt::entity entity = it->second;
+  registeredPlayers.erase(it);
+  if (registry && registry->valid(entity)) {
+    registry->destroy(entity);
+  }
+}
+
+void
+clearPlayers(std::shared_ptr<EntityRegistry> registry)
+{
+  if (registry) {
+    for (const auto& [connectionId, entity] : registeredPlayers) {
+      (void)connectionId;
+      if (registry->valid(entity)) {
+        registry->destroy(entity);
+      }
+    }
+  }
+  registeredPlayers.clear();
+}
+
 void
 movePlayer(std::shared_ptr<EntityRegistry> registry,
            uint32_t connectionId,

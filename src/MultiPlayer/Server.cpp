@@ -91,6 +91,31 @@ Server::broadcastPlayerUpdate(PlayerUpdate update)
 }
 
 void
+Server::sendPlayerUpdate(ENetPeer* peer, const PlayerUpdate& update)
+{
+  if (peer == nullptr) {
+    return;
+  }
+  ENetPacket* packet = enet_packet_create(
+    NULL,
+    sizeof(glm::vec3) * 2 + sizeof(uint32_t),
+    ENET_PACKET_FLAG_UNSEQUENCED);
+  if (packet == nullptr) {
+    return;
+  }
+  std::memcpy(packet->data, &update.position, sizeof(glm::vec3));
+  std::memcpy(static_cast<unsigned char*>(packet->data) + sizeof(glm::vec3),
+              &update.front,
+              sizeof(glm::vec3));
+  std::memcpy(static_cast<unsigned char*>(packet->data) + sizeof(glm::vec3) * 2,
+              &update.playerID,
+              sizeof(uint32_t));
+  if (enet_peer_send(peer, PLAYER_UPDATE, packet) != 0) {
+    enet_packet_destroy(packet);
+  }
+}
+
+void
 Server::broadcastSceneInfo(uint32_t playerID,
                            const SceneFingerprint& fingerprint)
 {
@@ -179,6 +204,7 @@ Server::PollLoop()
   std::vector<uint32_t> clients;
   std::unordered_map<uint32_t, SceneFingerprint> peerScenes;
   std::unordered_map<uint32_t, ENetPeer*> peers;
+  std::unordered_map<uint32_t, PlayerUpdate> playerStates;
   std::unordered_map<ENetPeer*, uint32_t> peerIDs;
   std::unordered_map<uint64_t, CachedShare> cachedShares;
 
@@ -283,6 +309,17 @@ Server::PollLoop()
             enet_peer_send(event.peer, PLAYER_JOIN, joinPacket);
           }
           enet_host_flush(server);
+
+          // Server-owned spawn: fan players out around the default camera
+          // instead of letting every client invent its own origin.
+          const std::size_t spawnIndex = clients.size();
+          PlayerUpdate spawn;
+          spawn.playerID = playerId;
+          spawn.position = glm::vec3(
+            static_cast<float>(spawnIndex % 4) * 1.5f - 2.25f, 1.5f, 1.8f);
+          spawn.front = glm::vec3(0.0f, 0.0f, -1.0f);
+          playerStates[playerId] = spawn;
+
           clients.push_back(playerId);
           peers[playerId] = event.peer;
           connectedClients.fetch_add(1);
@@ -294,11 +331,19 @@ Server::PollLoop()
             authorityID = playerId;
           }
           broadcastAuthority();
+
+          // Existing players for the newcomer, then the newcomer for everyone.
+          for (const auto& [id, state] : playerStates) {
+            (void)id;
+            sendPlayerUpdate(event.peer, state);
+          }
+          broadcastPlayerUpdate(spawn);
         } break;
         case ENET_EVENT_TYPE_RECEIVE:
           if (event.channelID == PLAYER_UPDATE) {
             if (event.packet->dataLength >= sizeof(glm::vec3) * 2) {
               auto update = getPlayerUpdateFromEvent(event);
+              playerStates[update.playerID] = update;
               broadcastPlayerUpdate(update);
             } else {
               spdlog::warn(
@@ -519,8 +564,17 @@ Server::PollLoop()
           }
           event.peer->data = nullptr;
           spdlog::info("MultiPlayer: player {} disconnected", playerId);
+          playerStates.erase(playerId);
           peerScenes.erase(playerId);
           peers.erase(playerId);
+          {
+            ENetPacket* leavePacket = enet_packet_create(
+              &playerId, sizeof(uint32_t), ENET_PACKET_FLAG_RELIABLE);
+            if (leavePacket != nullptr) {
+              enet_host_broadcast(server, PLAYER_LEAVE, leavePacket);
+              enet_host_flush(server);
+            }
+          }
           for (auto it = cachedShares.begin(); it != cachedShares.end();) {
             if ((it->first >> 32) == playerId) {
               it = cachedShares.erase(it);

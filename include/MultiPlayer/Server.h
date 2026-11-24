@@ -28,7 +28,8 @@ enum CHANNEL_TYPE
   WINDOW_CONTROL = 5,
   WINDOW_VIDEO = 6,
   WEBRTC_SIGNAL = 7,
-  WORLD_SYNC = 8
+  WORLD_SYNC = 8,
+  PLAYER_LEAVE = 9
 };
 
 class Server
@@ -64,6 +65,7 @@ private:
   std::thread pollThread;
   PlayerUpdate getPlayerUpdateFromEvent(ENetEvent&);
   void broadcastPlayerUpdate(PlayerUpdate);
+  void sendPlayerUpdate(ENetPeer* peer, const PlayerUpdate& update);
   void broadcastSceneInfo(uint32_t playerID,
                           const SceneFingerprint& fingerprint);
 

@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**matrix-server 玩家状态服务器化（第一版）**：
+  - 服务器维护玩家列表/出生点：连接时分配 spawn、广播 `PLAYER_JOIN`，把现有玩家状态发给新玩家，并广播新玩家状态；
+  - `PLAYER_UPDATE` 由服务器保存并广播；新增 `PLAYER_LEAVE`（channel 9），断线/超时后广播，客户端 `systems::unregisterPlayer` 删除远端头像；
+  - `systems::registerPlayer` 去重，`clearPlayers` 在客户端断线重连时清理旧头像；
+  - 实测双客户端：双方收到 `player ... joined`；强制杀掉一个客户端后，服务器 ~15s 超时广播 `player ... disconnected`，另一端收到 `player ... left`；
+  - 限制：玩家位置仍由客户端上报，服务器只做列表/出生/离开和分发；输入驱动的移动权威是下一步。
+
 - 2026-11-24：**matrix-server 持久化**：
   - `WorldSimulation::save()` 写回 `Positionable` 行，并用服务器专用的 `ServerVoxels` 表保存运行时体素；
   - 启动时恢复 `Positionable` + `ServerVoxels`，首帧 snapshot 即包含恢复后的世界；

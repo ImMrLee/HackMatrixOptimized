@@ -206,6 +206,7 @@ Client::cleanupConnectionState()
     std::lock_guard<std::mutex> lock(shareMutex);
     pendingWindowMessages.clear();
   }
+  systems::clearPlayers(registry);
   webrtc.reset();
   authorityID_.store(0);
   worldSeq_ = 0;
@@ -343,6 +344,7 @@ Client::handleEnetEvent(ENetEvent& event)
       std::memcpy(&playerID, event.packet->data, sizeof(uint32_t));
       if (peer->connectID != playerID) {
         systems::registerPlayer(registry, playerID);
+        spdlog::info("MultiPlayer: player {} joined", playerID);
       }
       break;
     }
@@ -364,6 +366,18 @@ Client::handleEnetEvent(ENetEvent& event)
     case 8:
       handleWorldSync(event.packet->data, event.packet->dataLength);
       break;
+    case 9: {
+      if (event.packet->dataLength < sizeof(uint32_t)) {
+        return;
+      }
+      uint32_t playerID = 0;
+      std::memcpy(&playerID, event.packet->data, sizeof(uint32_t));
+      if (peer->connectID != playerID) {
+        systems::unregisterPlayer(registry, playerID);
+        spdlog::info("MultiPlayer: player {} left", playerID);
+      }
+      break;
+    }
     default:
       break;
   }
