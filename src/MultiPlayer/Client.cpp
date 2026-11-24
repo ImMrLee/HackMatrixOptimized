@@ -664,15 +664,26 @@ Client::hasPeerSceneInfo() const
 bool
 Client::canShareWindows() const
 {
-  if (!hasLocalScene() || hasSceneMismatch()) {
+  if (!hasLocalScene()) {
     return false;
   }
-  return hasPeerSceneInfo() || worldAuthorityID() == kServerAuthorityID;
+  if (worldAuthorityID() == kServerAuthorityID) {
+    // The dedicated server owns world state and broadcasts entity/voxel
+    // snapshots. Local databases may legitimately differ in runtime tables
+    // (last saved positions, ServerVoxels, ...); that must not block sharing.
+    return true;
+  }
+  return hasPeerSceneInfo() && !hasSceneMismatch();
 }
 
 bool
 Client::sceneMatches(uint32_t playerID) const
 {
+  if (worldAuthorityID() == kServerAuthorityID) {
+    // Window metadata and entity transforms come from the server; trust the
+    // server-held world instead of rejecting peers on local DB hash drift.
+    return true;
+  }
   std::lock_guard<std::mutex> lock(sceneMutex);
   if (!localScene.valid) {
     return false;

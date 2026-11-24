@@ -22,7 +22,7 @@ namespace MultiPlayer {
 namespace {
 
 constexpr std::string_view kFingerprintDomain =
-  "hackmatrix-scene-fingerprint-v2";
+  "hackmatrix-scene-fingerprint-v3";
 
 // Two independent 64-bit streaming hashes are enough to detect accidental
 // scene divergence (a single changed byte flips both). This is deliberately
@@ -225,6 +225,16 @@ normalizeAssetPath(const std::string& text, const fs::path& projectRoot)
   return relative.generic_string();
 }
 
+bool
+isRuntimeStateTable(std::string_view table)
+{
+  // These rows are authoritative runtime state, not scene inputs: the server
+  // broadcasts entity transforms/voxel snapshots and every client converges on
+  // that state. Hashing them made two otherwise identical installs reject
+  // window sharing just because their last local save differed.
+  return table == "Positionable" || table == "ServerVoxels";
+}
+
 std::vector<std::string>
 listTables(SQLite::Database& database)
 {
@@ -356,6 +366,9 @@ computeSceneFingerprint(SQLite::Database& database,
   // Do not swallow query failures: a partially hashed scene would look like a
   // mismatch to every peer. Let the caller report "fingerprint unavailable".
   for (const auto& table : listTables(database)) {
+    if (isRuntimeStateTable(table)) {
+      continue;
+    }
     if (table == "Model") {
       hashModelRows(hasher, database, projectRoot, seen);
     } else {

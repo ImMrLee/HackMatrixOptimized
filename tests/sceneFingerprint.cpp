@@ -71,7 +71,20 @@ TEST_F(SceneFingerprintTest, IsDeterministic)
   EXPECT_NE(first.hex(), "(none)");
 }
 
-TEST_F(SceneFingerprintTest, LogicalSceneChangeChangesFingerprint)
+TEST_F(SceneFingerprintTest, StaticSceneChangeChangesFingerprint)
+{
+  SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+  createModelTable(db);
+  db.exec("CREATE TABLE Light (entity_id INTEGER PRIMARY KEY, color_r REAL)");
+
+  const auto before = computeSceneFingerprint(db, databaseFile.string());
+  db.exec("INSERT INTO Light (entity_id, color_r) VALUES (1, 0.5)");
+  const auto after = computeSceneFingerprint(db, databaseFile.string());
+
+  EXPECT_NE(before, after);
+}
+
+TEST_F(SceneFingerprintTest, RuntimeWorldStateDoesNotChangeFingerprint)
 {
   SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
   createModelTable(db);
@@ -79,9 +92,11 @@ TEST_F(SceneFingerprintTest, LogicalSceneChangeChangesFingerprint)
   const auto before = computeSceneFingerprint(db, databaseFile.string());
   db.exec("CREATE TABLE Positionable (entity_id INTEGER PRIMARY KEY, pos_x REAL)");
   db.exec("INSERT INTO Positionable (entity_id, pos_x) VALUES (1, 42.0)");
+  db.exec("CREATE TABLE ServerVoxels (id INTEGER PRIMARY KEY, pos_x REAL)");
+  db.exec("INSERT INTO ServerVoxels (pos_x) VALUES (1.0)");
   const auto after = computeSceneFingerprint(db, databaseFile.string());
 
-  EXPECT_NE(before, after);
+  EXPECT_EQ(before, after);
 }
 
 TEST_F(SceneFingerprintTest, FileLayoutDoesNotAffectFingerprint)

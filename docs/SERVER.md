@@ -36,8 +36,11 @@ Options:
   corresponding avatar entity on leave.
 - Window sharing works without another player online: clients connected to the
   dedicated server may pre-share a window. The server caches `Start`/`Transform`
-  /`ControlState` and replays them when a newcomer sends its scene fingerprint;
-  receivers still reject shares whose fingerprint does not match.
+  /`ControlState` and replays them when a newcomer sends its scene fingerprint.
+  In dedicated-server mode window sharing is not blocked by local database hash
+  drift: runtime state (`Positionable`, `ServerVoxels`) is excluded from the
+  scene fingerprint and `sceneMatches()` trusts the server-owned world. The
+  fingerprint still gates window sharing in client-authority/relay mode.
 - Starts the existing ENet relay (`MultiPlayer::Server`), accepts players and
   reports connected/disconnected players and the online count.
 - Does **not** link OpenGL, wlroots, Wayland, X11, GStreamer or ImGui.

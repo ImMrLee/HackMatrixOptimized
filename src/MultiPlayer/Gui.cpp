@@ -89,10 +89,22 @@ Gui::Render()
           ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s", notice.c_str());
       }
 
+      const bool serverWorld =
+        activeClient->worldAuthorityID() == MultiPlayer::kServerAuthorityID;
       if (activeClient->isComputingScene()) {
         ImGui::TextDisabled("Computing scene fingerprint...");
       } else if (!activeClient->hasLocalScene()) {
         ImGui::TextDisabled("Scene fingerprint unavailable");
+      } else if (serverWorld) {
+        if (activeClient->hasSceneMismatch()) {
+          ImGui::TextColored(
+            ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
+            "Dedicated server: sharing enabled (local scene hash differs; world is server-authoritative)");
+        } else {
+          ImGui::TextColored(
+            ImVec4(0.45f, 1.0f, 0.45f, 1.0f),
+            "Dedicated server: window sharing available (held for joining players)");
+        }
       } else if (activeClient->hasSceneMismatch()) {
         ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
                            "Scene mismatch: window sharing disabled");
@@ -104,11 +116,6 @@ Gui::Render()
       } else if (activeClient->hasPeerSceneInfo()) {
         ImGui::TextColored(ImVec4(0.45f, 1.0f, 0.45f, 1.0f),
                            "Scenes match: window sharing available");
-      } else if (activeClient->worldAuthorityID() ==
-                 MultiPlayer::kServerAuthorityID) {
-        ImGui::TextColored(
-          ImVec4(0.45f, 1.0f, 0.45f, 1.0f),
-          "Dedicated server: window sharing available (held for joining players)");
       } else {
         ImGui::TextDisabled("Waiting for peer scene info...");
       }
@@ -155,8 +162,6 @@ Gui::Render()
       const bool localSceneReady = activeClient->hasLocalScene();
       const bool sceneKnown = activeClient->hasPeerSceneInfo();
       const bool sceneMismatch = activeClient->hasSceneMismatch();
-      const bool serverWorld =
-        activeClient->worldAuthorityID() == MultiPlayer::kServerAuthorityID;
       const bool canShare = activeClient->canShareWindows();
 
       auto registry = engine ? engine->getRegistry() : nullptr;
@@ -292,14 +297,14 @@ Gui::Render()
           if (!localSceneReady) {
             ImGui::TextWrapped(
               "Waiting for the local scene fingerprint before sharing");
+          } else if (serverWorld) {
+            ImGui::TextWrapped(
+              "Dedicated server: shares are kept for players who join later; world state comes from the server");
           } else if (sceneMismatch) {
             ImGui::TextWrapped("Scene mismatch: sharing disabled");
-          } else if (!sceneKnown && !serverWorld) {
-            ImGui::TextWrapped(
-              "Waiting for peer scene info before sharing");
           } else if (!sceneKnown) {
             ImGui::TextWrapped(
-              "Dedicated server: shares are kept for players who join later");
+              "Waiting for peer scene info before sharing");
           } else {
             ImGui::TextWrapped(
               "Shared windows stream to other players (H.264, MJPEG fallback)");

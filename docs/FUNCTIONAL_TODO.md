@@ -85,6 +85,12 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**专用服务器下 scene mismatch 误报修复**：
+  - 场景指纹不再哈希运行时状态表（`Positionable`、`ServerVoxels`），只比较静态场景/模型资源；位置与体素由服务器 snapshot 收敛；
+  - 连接专用服务器（authority = `kServerAuthorityID`）时，窗口共享不再被客户端本地 DB 指纹差异阻断：`canShareWindows()` 允许共享，`sceneMatches()` 信任服务器权威世界；
+  - UI 在专用服务器模式下即使本地 hash 不同也显示为可共享，并提示“world is server-authoritative”；
+  - 87/87 单测通过（新增运行时状态不影响指纹的测试）。
+
 - 2026-11-24：**自由视角下二级菜单/弹窗不显示**：
   - 根因：`Renderer::renderApps()` 只绘制 parent 等于 `getCurrentlyFocusedApp()` 的 accessory surface；自由视角没有 WM focus，所以 popup 被跳过，按 R 聚焦后才出现；
   - 修复：`WindowManager` 增加 `popupOwner`，由准星 hover/点击的窗口设置；renderer 在 `focusedEnt` 或 `popupOwner` 下绘制 accessory；
