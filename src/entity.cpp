@@ -4,11 +4,16 @@
 #include "Config.h"
 #include <iostream>
 
-EntityRegistry::EntityRegistry() {
+EntityRegistry::EntityRegistry()
+  : EntityRegistry(Config::singleton()->get<std::string>("database_file"))
+{
+}
 
-  databaseFile = Config::singleton()->get<std::string>("database_file");
-  db = std::make_shared<SQLite::Database>(databaseFile,
-                                          SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+EntityRegistry::EntityRegistry(const std::string& databaseFile)
+{
+  this->databaseFile = databaseFile;
+  db = std::make_shared<SQLite::Database>(
+    databaseFile, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
 }
 
 SQLite::Database &EntityRegistry::getDatabase()

@@ -859,9 +859,19 @@ target_link_libraries(bootServer PRIVATE
 # simulation/snapshots will live in this target as the core is decoupled.
 option(MATRIX_BUILD_SERVER "Build the standalone matrix-server" ON)
 if(MATRIX_BUILD_SERVER)
+  file(GLOB SERVER_SQLITE_SOURCES CONFIGURE_DEPENDS src/sqlite/*.cpp)
   add_executable(matrix-server
     src/server/main.cpp
+    src/server/WorldSimulation.cpp
+    src/entity.cpp
+    src/Config.cpp
+    src/components/Positionable.cpp
+    src/persister.cpp
+    src/systems/ApplyRotation.cpp
+    src/systems/ApplyTranslation.cpp
+    src/time_utils.cpp
     src/MultiPlayer/Server.cpp
+    ${SERVER_SQLITE_SOURCES}
   )
   target_include_directories(matrix-server PRIVATE
     include

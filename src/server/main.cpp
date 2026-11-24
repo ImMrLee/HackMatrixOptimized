@@ -1,7 +1,6 @@
 #define ENET_IMPLEMENTATION
 #include "MultiPlayer/Server.h"
-
-#include <sqlite3.h>
+#include "server/WorldSimulation.h"
 
 #include <atomic>
 #include <chrono>
@@ -23,43 +22,6 @@ void
 handleSignal(int)
 {
   g_stop.store(true);
-}
-
-bool
-tableExists(sqlite3* db, const char* table)
-{
-  sqlite3_stmt* stmt = nullptr;
-  if (sqlite3_prepare_v2(db,
-                         "SELECT 1 FROM sqlite_master WHERE type='table' AND "
-                         "name=?1",
-                         -1,
-                         &stmt,
-                         nullptr) != SQLITE_OK) {
-    return false;
-  }
-  sqlite3_bind_text(stmt, 1, table, -1, SQLITE_STATIC);
-  const bool exists = sqlite3_step(stmt) == SQLITE_ROW;
-  sqlite3_finalize(stmt);
-  return exists;
-}
-
-long long
-tableCount(sqlite3* db, const char* table)
-{
-  if (!tableExists(db, table)) {
-    return -1;
-  }
-  const std::string sql = std::string("SELECT COUNT(*) FROM \"") + table + "\"";
-  sqlite3_stmt* stmt = nullptr;
-  if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-    return -1;
-  }
-  long long count = -1;
-  if (sqlite3_step(stmt) == SQLITE_ROW) {
-    count = sqlite3_column_int64(stmt, 0);
-  }
-  sqlite3_finalize(stmt);
-  return count;
 }
 
 void
@@ -105,33 +67,17 @@ main(int argc, char** argv)
   logger->flush_on(spdlog::level::info);
   spdlog::set_default_logger(logger);
 
-  // Read-only DB inspection. The simulation module will own the real registry;
-  // this first server target only validates the headless module boundary.
-  sqlite3* db = nullptr;
-  if (sqlite3_open_v2(databasePath.c_str(),
-                      &db,
-                      SQLITE_OPEN_READONLY,
-                      nullptr) != SQLITE_OK) {
-    spdlog::error("cannot open scene database '{}': {}",
+  server::WorldSimulation simulation;
+  std::string loadError;
+  if (!simulation.load(databasePath, loadError)) {
+    spdlog::error("failed to load scene database '{}': {}",
                   databasePath,
-                  db != nullptr ? sqlite3_errmsg(db) : "unknown error");
-    if (db != nullptr) {
-      sqlite3_close(db);
-    }
+                  loadError);
     return 1;
   }
-
-  for (const char* table :
-       { "Entity", "Positionable", "Model", "Light", "Bootable",
-         "Scriptable", "Door", "Key", "Lock" }) {
-    const long long count = tableCount(db, table);
-    if (count >= 0) {
-      spdlog::info("db: {} = {}", table, count);
-    } else {
-      spdlog::warn("db: {} (missing)", table);
-    }
-  }
-  sqlite3_close(db);
+  spdlog::info("world loaded: {} entities, {} positionables",
+               simulation.entityCount(),
+               simulation.positionableCount());
 
   std::signal(SIGINT, handleSignal);
   std::signal(SIGTERM, handleSignal);
@@ -143,8 +89,25 @@ main(int argc, char** argv)
   }
   spdlog::info("matrix-server listening on UDP {} (db {})", port, databasePath);
 
+  constexpr auto kTick = std::chrono::milliseconds(50); // 20 Hz
+  auto nextTick = std::chrono::steady_clock::now();
+  auto nextLog = nextTick + std::chrono::seconds(5);
   while (!g_stop.load()) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    simulation.tick();
+    nextTick += kTick;
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= nextLog) {
+      nextLog = now + std::chrono::seconds(5);
+      spdlog::info("server tick: {} online, {} entities",
+                   server.clientCount(),
+                   simulation.entityCount());
+    }
+    if (nextTick > now) {
+      std::this_thread::sleep_until(nextTick);
+    } else {
+      // Catch up without sleeping if a tick took longer than the interval.
+      nextTick = now;
+    }
   }
 
   spdlog::info("matrix-server stopping ({} client(s) online)",

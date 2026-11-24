@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**matrix-server Phase 2（无 GL 世界 tick）**：
+  - 把 `Positionable` 与 `PositionablePersister` 从 `src/model.cpp` 拆到 `src/components/Positionable.cpp`，避免服务器为了位置数据链接 Model/Assimp/GL；
+  - `EntityRegistry` 新增显式数据库路径构造，服务器不再依赖 `Config::database_file`；
+  - 新增 `server::WorldSimulation`：加载 `Entity + Positionable`，以 20Hz 执行 `applyRotation/applyTranslations` 和 damaged transform 更新；Model/Light 等 GL-backed persister 暂不加载；
+  - `matrix-server` 现在输出 `world loaded: N entities, M positionables`、`server tick: X online, N entities`；
+  - 验证：`ldd matrix-server` 无 GL/wlroots/Wayland/X11；真实客户端连入显示 `player ... connected (1 online)`；主客户端 `matrix`、`bootServer`、86/86 单测均构建/通过。
+
 - 2026-11-24：**专用服务器骨架（`matrix-server`）** 已建立：
   - 新增 `src/server/main.cpp`，加载 `db/matrix.db`（只读）并打印 Entity/Positionable/Model/Light/Bootable 等表计数；
   - 复用 `MultiPlayer::Server` ENet 中继，服务器控制台显示玩家连接/断开和在线人数（`Server::clientCount()`）；

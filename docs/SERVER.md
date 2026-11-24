@@ -21,14 +21,20 @@ Options:
 
 ## What it does today
 
-- Opens the scene database read-only and prints table counts.
-- Starts the existing ENet relay (`MultiPlayer::Server`).
-- Accepts players, reports connected/disconnected players and the online count.
-- Does **not** link OpenGL, wlroots, Wayland, X11, GStreamer, ImGui or
-  GStreamer. `ldd build/matrix-server` should show only libc, sqlite3, enet
-  headers are compiled in, spdlog/fmt and their dependencies.
-- Does **not** simulate the world yet: the first connected client is still the
-  F14a world authority, exactly like `bootServer`.
+- Loads the scene `Entity` + `Positionable` rows into a server-side
+  `EntityRegistry` (see `src/server/WorldSimulation.cpp`).
+- Ticks the GL-free movement systems at 20 Hz (`applyRotation`,
+  `applyTranslations`, damaged transform updates).
+- Starts the existing ENet relay (`MultiPlayer::Server`), accepts players and
+  reports connected/disconnected players and the online count.
+- Does **not** link OpenGL, wlroots, Wayland, X11, GStreamer or ImGui.
+  `ldd build/matrix-server` should show only libc, sqlite3, enet (header
+  implementation), spdlog/fmt and their dependencies.
+- Still uses the first connected client as the F14a world authority; authority
+  migration and player/world snapshots are the next step.
+- Only `Positionable` is loaded today. Model/Light persisters construct GL
+  resources, so they are intentionally omitted from the headless registry until
+  the visual data is made lazy/optional.
 
 ## Why this shape
 

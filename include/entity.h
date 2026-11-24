@@ -17,6 +17,8 @@ class EntityRegistry : public entt::registry
 
 public:
   EntityRegistry();
+  // Open an explicit scene database (used by the headless server).
+  explicit EntityRegistry(const std::string& databaseFile);
   SQLite::Database &getDatabase();
   const std::string& getDatabaseFile() const { return databaseFile; }
   void addPersister(std::shared_ptr<SQLPersister>);
