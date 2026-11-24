@@ -120,6 +120,7 @@ editor and multiplayer controls. It is enabled by default.
 | `HACKMATRIX_SCREENSHOT_AFTER_MS=N` | Write a screenshot N ms after the first frame (useful when a client connects later) |
 | `HACKMATRIX_IMGUI_MULTIPLAYER_TAB=1` | Force the Multiplayer tab to be selected (UI screenshots/tests) |
 | `HACKMATRIX_DEBUG_MULTIPLAYER_CONNECT=host:port` | Auto-connect the Multiplayer panel once (headless UI tests) |
+| `HACKMATRIX_DEBUG_FOCUS_NEW_WINDOW=1` | Lock each new top-level window/input (default: only `R` locks a window) |
 | `HACKMATRIX_DEBUG_PREVIEW_FIRST_WINDOW=1` | Create a local loopback preview of the first window (headless UI tests) |
 | `HACKMATRIX_DEBUG_SHARE_FIRST_WINDOW=1` | Publish the first window once the scene is usable (matching peer or dedicated server, headless tests) |
 | `HACKMATRIX_DEBUG_ALLOW_CONTROL_FIRST_WINDOW=1` | Also allow control for the auto-shared window (headless tests) |
