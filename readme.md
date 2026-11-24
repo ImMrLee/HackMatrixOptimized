@@ -331,21 +331,30 @@ ASAN_OPTIONS=detect_container_overflow=0 ctest --test-dir build-asan --output-on
 ```bash
 hackmatrix
 ```
+---
 
-### 如何让 client_libraries 正常工作
-执行 `scripts/install-python-clientlib.sh` 以手动安装
-
-#### Python
+## 专用服务器（Beta）构建
 ```bash
-# Install python hackMatrix lib
-python -m venv hackmatrix_python
-cd hackmatrix_python
-source bin/activate
-cd client_libs/python
-pip install .
-cd ../..
+cd <project_dir>
 
-# 测试
-python scripts/player-move.py
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMATRIX_BUILD_EXAMPLES=ON
+cmake --build build -j"$(nproc)" --target matrix matrix-server voxel_demo
 ```
-但代码大量改动，这个不一定好用了
+
+### 运行
+用一份数据库副本，避免服务器和客户端互相写 db/matrix.db：
+```bash
+cp db/matrix.db /tmp/hackmatrix-server.db
+./build/matrix-server --port 7777 --db /tmp/hackmatrix-server.db
+```
+
+## 后续计划
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 多人游戏 | 正在测试 | 连接性已支持，窗口共享控制功能在测试中 |
+| 专用服务器 | 正在测试 | 正常运行，可以被连接，稳定性问题仍需测试 |
+| 更好的交互 | 正在测试 | 增加准星操作，灵感来源于Minecraft的WaylandCraft MOD |
+| 场景自定义便捷化 | 待办项 | 目的实现场景自由，让用户有一个属于自己的空间 |
+
+**祝您体验愉快！**
