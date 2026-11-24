@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**远控窗口自动聚焦/锁定视角与输入直通**：
+  - 控制授权成功后，控制器收到 `ControlState` 会请求渲染线程 `focusRemoteApp`：相机移动到共享窗口、切换 cursor 模式，视角不再被鼠标旋转；
+  - 相机聚焦完成后把光标移到屏幕中心，用户可直接移动鼠标到共享窗口；
+  - 释放控制（Esc）或失去控制时 `returnToFreeLook`：恢复自由视角、隐藏光标；
+  - 远控鼠标在自由视角下使用中心准星射线命中 remote window，cursor 模式使用真实指针；按键仍按原有通道注入 owner；
+  - 实测双客户端：A 共享 EventDemo，B 授权控制后 `focusRemoteApp ent=42`，owner 收到 `button 272 press/release x=800 y=300` 和 `key 30`。
+
 - 2026-11-24：**专用服务器下 scene mismatch 误报修复**：
   - 场景指纹不再哈希运行时状态表（`Positionable`、`ServerVoxels`），只比较静态场景/模型资源；位置与体素由服务器 snapshot 收敛；
   - 连接专用服务器（authority = `kServerAuthorityID`）时，窗口共享不再被客户端本地 DB 指纹差异阻断：`canShareWindows()` 允许共享，`sceneMatches()` 信任服务器权威世界；

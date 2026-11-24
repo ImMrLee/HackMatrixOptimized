@@ -50,6 +50,8 @@ remoteWindowController(WlrServer* server)
   return client.get();
 }
 
+static bool free_view_active(WlrServer* server);
+
 static std::optional<WindowManager::AppRayHit>
 remoteWindowUnderPointer(WlrServer* server)
 {
@@ -71,6 +73,35 @@ remoteWindowUnderPointer(WlrServer* server)
     static_cast<float>(server->primary_output->width),
     static_cast<float>(server->primary_output->height),
     20.0f);
+}
+
+static std::optional<WindowManager::AppRayHit>
+remoteWindowUnderCrosshair(WlrServer* server)
+{
+  if (!server || !server->engine || !server->primary_output) {
+    return std::nullopt;
+  }
+  auto wm = server->engine->getWindowManager();
+  if (!wm) {
+    return std::nullopt;
+  }
+  auto space = wm->getSpace();
+  if (!space) {
+    return std::nullopt;
+  }
+  const float width = static_cast<float>(server->primary_output->width);
+  const float height = static_cast<float>(server->primary_output->height);
+  return space->raycastRemoteAppFromScreen(
+    width * 0.5f, height * 0.5f, width, height, 10000.0f);
+}
+
+static std::optional<WindowManager::AppRayHit>
+remoteWindowUnderAim(WlrServer* server)
+{
+  if (free_view_active(server)) {
+    return remoteWindowUnderCrosshair(server);
+  }
+  return remoteWindowUnderPointer(server);
 }
 
 static void
@@ -960,7 +991,7 @@ handle_pointer_motion(wl_listener* listener, void* data)
   if (auto* client = remoteWindowController(handle->server);
       client != nullptr && handle->server->engine &&
       !handle->server->engine->imguiWantsMouse()) {
-    if (auto hit = remoteWindowUnderPointer(handle->server);
+    if (auto hit = remoteWindowUnderAim(handle->server);
         hit.has_value() && client->isControllingRemoteEntity(hit->entity)) {
       client->sendRemotePointerMotion(hit->surfacePixels.x,
                                       hit->surfacePixels.y);
@@ -1058,7 +1089,7 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
   if (auto* client = remoteWindowController(handle->server);
       client != nullptr && handle->server->engine &&
       !handle->server->engine->imguiWantsMouse()) {
-    if (auto hit = remoteWindowUnderPointer(handle->server);
+    if (auto hit = remoteWindowUnderAim(handle->server);
         hit.has_value() && client->isControllingRemoteEntity(hit->entity)) {
       client->sendRemotePointerMotion(hit->surfacePixels.x,
                                       hit->surfacePixels.y);
@@ -1120,7 +1151,7 @@ handle_pointer_axis(wl_listener* listener, void* data)
   if (auto* client = remoteWindowController(handle->server);
       client != nullptr && handle->server->engine &&
       !handle->server->engine->imguiWantsMouse()) {
-    if (auto hit = remoteWindowUnderPointer(handle->server);
+    if (auto hit = remoteWindowUnderAim(handle->server);
         hit.has_value() && client->isControllingRemoteEntity(hit->entity)) {
       client->sendRemotePointerAxis(event->delta,
                                     event->delta_discrete,
@@ -1230,9 +1261,11 @@ inject_pointer_button(WlrServer* server,
   if (!imgui_captured) {
     if (auto* client = remoteWindowController(server)) {
       if (pressed) {
-        if (auto hit = remoteWindowUnderPointer(server);
+        if (auto hit = remoteWindowUnderAim(server);
             hit.has_value() &&
             client->isControllingRemoteEntity(hit->entity)) {
+          client->sendRemotePointerMotion(hit->surfacePixels.x,
+                                          hit->surfacePixels.y);
           client->sendRemotePointerButton(button, true);
           handled = true;
         } else if (button == BTN_LEFT) {

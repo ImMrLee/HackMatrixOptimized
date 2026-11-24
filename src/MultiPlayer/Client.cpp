@@ -1697,12 +1697,19 @@ Client::handleControlState(const uint8_t* data, std::size_t size)
     it->second.controllerID = controllerID;
     it->second.controlPending = false;
     selfControlling = peer != nullptr && controllerID == peer->connectID;
+    const bool alreadyControlling =
+      controlledOwnerID == owner && controlledShareId == shareId;
     if (selfControlling) {
       controlledOwnerID = owner;
       controlledShareId = shareId;
+      if (!alreadyControlling) {
+        remoteFocusRequest_.store(
+          static_cast<uint32_t>(entt::to_integral(it->second.entity)));
+      }
     } else if (controlledOwnerID == owner && controlledShareId == shareId) {
       controlledOwnerID = 0;
       controlledShareId = 0;
+      remoteUnfocusRequest_.store(true);
     }
   }
 
@@ -2334,6 +2341,21 @@ Client::isControllingRemote() const
   return controlledShareId != 0;
 }
 
+entt::entity
+Client::takeRemoteFocusRequest()
+{
+  const uint32_t value = remoteFocusRequest_.exchange(0xFFFFFFFFu);
+  return value == 0xFFFFFFFFu
+           ? entt::null
+           : static_cast<entt::entity>(value);
+}
+
+bool
+Client::takeRemoteUnfocusRequest()
+{
+  return remoteUnfocusRequest_.exchange(false);
+}
+
 bool
 Client::isControllingRemoteEntity(entt::entity entity) const
 {
@@ -2403,6 +2425,9 @@ Client::releaseRemoteControl()
     sendControlPacket(
       encodeControlRelease(ownerID, shareId, peer->connectID), true);
     spdlog::info("MultiPlayer: released control of share {}", shareId);
+  }
+  if (ownerID != 0 || shareId != 0) {
+    remoteUnfocusRequest_.store(true);
   }
 }
 

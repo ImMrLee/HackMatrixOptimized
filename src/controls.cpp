@@ -22,6 +22,7 @@
 #include "renderer.h"
 #include "TypedKeyOverlay.h"
 #include "time_utils.h"
+#include "remote_app.h"
 
 using namespace std;
 
@@ -381,6 +382,58 @@ Controls::handleModEscape()
 {
   if (isPressed(XKB_KEY_Delete)) {
     throw "errorEscape";
+  }
+}
+
+void
+Controls::focusRemoteApp(entt::entity app)
+{
+  if (!wm || !windowManagerSpace || !registry || !registry->valid(app) ||
+      !registry->all_of<Positionable>(app) ||
+      !registry->all_of<MultiPlayer::RemoteApp::Component>(app) || !camera) {
+    return;
+  }
+  log_controls("controls: focusRemoteApp ent=%d\n",
+               (int)entt::to_integral(app));
+  const float deltaZ = windowManagerSpace->getViewDistanceForWindowSize(app);
+  const glm::vec3 rotationDegrees = windowManagerSpace->getAppRotation(app);
+  const glm::quat rotationQuat = glm::quat(glm::radians(rotationDegrees));
+  glm::vec3 targetPosition = windowManagerSpace->getAppPosition(app);
+  targetPosition =
+    targetPosition + rotationQuat * glm::vec3(0, 0, deltaZ);
+
+  grabbedCursor = false;
+  resetMouse = true;
+  if (wm) {
+    wm->setCursorVisible(true);
+    wm->clearCursorInputFocus();
+  }
+  const glm::vec3 front = rotationQuat * glm::vec3(0, 0, -1);
+  auto isDone = camera->moveTo(targetPosition, front, windowFlop);
+  doAfter(isDone, [this]() {
+    // Keep cursor mode: the view stays locked on the shared window and mouse
+    // motion is translated to remote pointer motion.
+    grabbedCursor = false;
+    resetMouse = true;
+    if (wm) {
+      wm->setCursorVisible(true);
+      wm->clearCursorInputFocus();
+    }
+    if (pointerCenterCallback) {
+      pointerCenterCallback();
+    }
+  });
+}
+
+void
+Controls::returnToFreeLook()
+{
+  log_controls("controls: returnToFreeLook\n");
+  grabbedCursor = true;
+  resetMouse = true;
+  if (wm) {
+    wm->setCursorVisible(false);
+    wm->clearCursorInputFocus();
   }
 }
 
@@ -756,11 +809,22 @@ Controls::isPressedEither(xkb_keysym_t a, xkb_keysym_t b) const
 void
 Controls::handleToggleApp()
 {
+  if (!isPressedEither(XKB_KEY_r, XKB_KEY_R)) {
+    return;
+  }
   auto app = windowManagerSpace ? windowManagerSpace->getLookedAtApp()
                                 : std::optional<entt::entity>();
-  if (app.has_value() && isPressedEither(XKB_KEY_r, XKB_KEY_R) &&
-      debounce(lastKeyPressTime)) {
+  auto remote = !app.has_value() && windowManagerSpace
+                  ? windowManagerSpace->getLookedAtRemoteApp()
+                  : std::optional<entt::entity>();
+  if ((!app.has_value() && !remote.has_value()) ||
+      !debounce(lastKeyPressTime)) {
+    return;
+  }
+  if (app.has_value()) {
     goToApp(app.value());
+  } else {
+    focusRemoteApp(remote.value());
   }
 }
 

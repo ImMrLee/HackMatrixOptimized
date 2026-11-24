@@ -105,6 +105,10 @@ public:
   uint32_t localPlayerID() const { return peer ? peer->connectID : 0; }
   bool isControllingRemote() const;
   bool isControllingRemoteEntity(entt::entity entity) const;
+  // Set when control of a shared window is granted; the render thread consumes
+  // it to move/lock the camera onto that window.
+  entt::entity takeRemoteFocusRequest();
+  bool takeRemoteUnfocusRequest();
   void requestRemoteControl(uint32_t ownerID, uint32_t shareId);
   void releaseRemoteControl();
   void requestRemoteKeyframe(uint32_t ownerID, uint32_t shareId);
@@ -296,6 +300,8 @@ private:
   // F14a world sync state. world_ is owned by Engine and set each frame.
   World* world_ = nullptr;
   std::atomic<uint32_t> authorityID_{ 0 };
+  std::atomic<uint32_t> remoteFocusRequest_{ 0xFFFFFFFFu };
+  std::atomic<bool> remoteUnfocusRequest_{ false };
   uint64_t worldSeq_ = 0;          // authority's outgoing sequence
   uint64_t lastAppliedWorldSeq_ = 0; // last authoritative seq applied
   std::mutex worldOutMutex_;

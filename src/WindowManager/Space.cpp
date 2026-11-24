@@ -92,6 +92,12 @@ Space::getViewDistanceForWindowSize(entt::entity entity)
     surface = comp.app.get();
   }
   if (!surface) {
+    if (auto* remote =
+          registry->try_get<MultiPlayer::RemoteApp::Component>(entity)) {
+      surface = remote->app.get();
+    }
+  }
+  if (!surface) {
     return 1.0f;
   }
   auto positionable = registry->try_get<Positionable>(entity);
@@ -312,6 +318,26 @@ Space::getLookedAtApp()
                            camera->getProjectionMatrix(true),
                            camera->getViewMatrix());
   if (auto hit = raycastApp(ray, 2.5f)) {
+    return hit->entity;
+  }
+  return std::nullopt;
+}
+
+optional<entt::entity>
+Space::getLookedAtRemoteApp()
+{
+  if (!camera || SCREEN_WIDTH <= 0.0f || SCREEN_HEIGHT <= 0.0f) {
+    return std::nullopt;
+  }
+  Ray ray = createMouseRay(SCREEN_WIDTH * 0.5f,
+                           SCREEN_HEIGHT * 0.5f,
+                           SCREEN_WIDTH,
+                           SCREEN_HEIGHT,
+                           camera->getProjectionMatrix(true),
+                           camera->getViewMatrix());
+  // Shared windows can be farther away than local apps; R should still be
+  // able to bring the camera to them.
+  if (auto hit = raycastRemoteApp(ray, 10000.0f)) {
     return hit->entity;
   }
   return std::nullopt;

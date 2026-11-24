@@ -58,6 +58,7 @@ class Controls
   std::mutex queuedActionsMutex;
   shared_ptr<WindowManager::Space> windowManagerSpace;
   bool keysEnabled = true;
+  std::function<void()> pointerCenterCallback;
 
   std::unordered_set<xkb_keysym_t> pressed;
 
@@ -136,6 +137,14 @@ public:
   void poll();
   void pollPressedKeys();
   void goToApp(entt::entity);
+  // Move the camera to a shared/remote window and switch to cursor mode so
+  // mouse input goes to the remote app instead of rotating the camera.
+  void focusRemoteApp(entt::entity);
+  void returnToFreeLook();
+  void setPointerCenterCallback(std::function<void()> callback)
+  {
+    pointerCenterCallback = std::move(callback);
+  }
   void moveTo(glm::vec3 pos,
               optional<glm::vec3> rotation,
               float secs,

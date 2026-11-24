@@ -342,6 +342,8 @@ Gui::Render()
             nullptr &&
           activeClient->isControllingRemote()) {
         activeClient->sendRemotePointerMotion(800.0, 300.0);
+        activeClient->sendRemotePointerButton(0x110u, true); // BTN_LEFT
+        activeClient->sendRemotePointerButton(0x110u, false);
         debugControlPointerSent = true;
       }
 

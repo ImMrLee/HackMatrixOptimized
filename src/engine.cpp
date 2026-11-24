@@ -289,6 +289,13 @@ void Engine::multiplayerClientIteration(double frameStart) {
   static double lastPlayerUpdate = 0;
   if (client) {
     client->poll();
+    if (auto remoteFocus = client->takeRemoteFocusRequest();
+        remoteFocus != entt::null && controls) {
+      controls->focusRemoteApp(remoteFocus);
+    }
+    if (client->takeRemoteUnfocusRequest() && controls) {
+      controls->returnToFreeLook();
+    }
     if (client->isDisconnected()) {
       if (!client->connectionError().empty()) {
         multiplayerError_ = client->connectionError();

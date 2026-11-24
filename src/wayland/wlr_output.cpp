@@ -321,6 +321,17 @@ handle_output_frame(wl_listener* listener, void* data)
           server->ime->renderOverlay();
         }
       });
+      if (auto* controls = server->engine->getControls()) {
+        controls->setPointerCenterCallback([server]() {
+          if (!server->cursor || !server->cursor_mgr) {
+            return;
+          }
+          wlr_cursor_warp_absolute(
+            server->cursor, server->last_pointer_device, 0.5, 0.5);
+          server->pointer_x = server->cursor->x;
+          server->pointer_y = server->cursor->y;
+        });
+      }
       // KEY_REPLAY / remote control typing: map a keysym back to a keycode on
       // the active keymap and deliver it through the seat (and IME grab).
       server->engine->setPointerInjector(
