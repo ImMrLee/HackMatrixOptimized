@@ -9,6 +9,9 @@
 
 #include <algorithm>
 #include <cmath>
+
+#include <SQLiteCpp/SQLiteCpp.h>
+#include <spdlog/spdlog.h>
 #include <exception>
 #include <iterator>
 #include <memory>
@@ -21,6 +24,98 @@ constexpr float kDefaultVoxelSize = 0.1f;
 constexpr float kPositionEpsilon = 0.0001f;
 
 } // namespace
+
+void
+WorldSimulation::loadVoxelsLocked()
+{
+  if (!registry_ || !dynamicObjects_) {
+    return;
+  }
+  SQLite::Database& db = registry_->getDatabase();
+  db.exec("CREATE TABLE IF NOT EXISTS ServerVoxels ("
+          "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+          "pos_x REAL, pos_y REAL, pos_z REAL, "
+          "edge REAL, color_r REAL, color_g REAL, color_b REAL)");
+  SQLite::Statement query(
+    db,
+    "SELECT pos_x, pos_y, pos_z, edge, color_r, color_g, color_b "
+    "FROM ServerVoxels ORDER BY id");
+  while (query.executeStep()) {
+    const glm::vec3 position(query.getColumn(0).getDouble(),
+                             query.getColumn(1).getDouble(),
+                             query.getColumn(2).getDouble());
+    const float edge = static_cast<float>(query.getColumn(3).getDouble());
+    const glm::vec3 color(query.getColumn(4).getDouble(),
+                          query.getColumn(5).getDouble(),
+                          query.getColumn(6).getDouble());
+    auto cube = std::make_shared<DynamicCube>(
+      position, glm::vec3(edge > 0.0f ? edge : kDefaultVoxelSize), color);
+    apiIds_.insert(cube->id());
+    dynamicObjects_->addObject(cube);
+  }
+}
+
+bool
+WorldSimulation::save(std::string* error)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!registry_ || !dynamicObjects_) {
+    if (error) {
+      *error = "world not loaded";
+    }
+    return false;
+  }
+  try {
+    registry_->saveAll();
+
+    SQLite::Database& db = registry_->getDatabase();
+    db.exec("CREATE TABLE IF NOT EXISTS ServerVoxels ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "pos_x REAL, pos_y REAL, pos_z REAL, "
+            "edge REAL, color_r REAL, color_g REAL, color_b REAL)");
+    SQLite::Transaction transaction(db);
+    db.exec("DELETE FROM ServerVoxels");
+    SQLite::Statement insert(
+      db,
+      "INSERT INTO ServerVoxels "
+      "(pos_x, pos_y, pos_z, edge, color_r, color_g, color_b) "
+      "VALUES (?, ?, ?, ?, ?, ?, ?)");
+    for (int id : apiIds_) {
+      auto cube = std::dynamic_pointer_cast<DynamicCube>(
+        dynamicObjects_->getObjectById(id));
+      if (!cube) {
+        continue;
+      }
+      const auto position = cube->getPosition();
+      const auto color = cube->getColor();
+      insert.bind(1, position.x);
+      insert.bind(2, position.y);
+      insert.bind(3, position.z);
+      insert.bind(4, cube->getSize().x);
+      insert.bind(5, color.r);
+      insert.bind(6, color.g);
+      insert.bind(7, color.b);
+      insert.exec();
+      insert.reset();
+    }
+    transaction.commit();
+    dirty_ = false;
+    return true;
+  } catch (const std::exception& exception) {
+    if (error) {
+      *error = exception.what();
+    }
+    spdlog::error("server world save failed: {}", exception.what());
+    return false;
+  }
+}
+
+bool
+WorldSimulation::hasPendingChanges() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return dirty_;
+}
 
 MultiPlayer::WorldSyncEntityTransform
 WorldSimulation::toProto(std::uint32_t entityId,
@@ -65,6 +160,7 @@ WorldSimulation::load(const std::string& databasePath, std::string& error)
     registry_->createTablesIfNeeded();
     registry_->loadAll();
     dynamicObjects_ = std::make_shared<DynamicObjectSpace>();
+    loadVoxelsLocked();
 
     cachedTransforms_.clear();
     for (auto [entity, positionable] :
@@ -80,6 +176,7 @@ WorldSimulation::load(const std::string& databasePath, std::string& error)
       cachedTransforms_[static_cast<std::uint32_t>(entity)] = cached;
     }
     seq_ = 0;
+    dirty_ = false;
     return true;
   } catch (const std::exception& exception) {
     error = exception.what();
@@ -149,6 +246,7 @@ WorldSimulation::scanEntitiesLocked(
       continue;
     }
     it->second = next;
+    dirty_ = true;
     outgoing.push_back(MultiPlayer::encodeWorldEntityTransform(
       MultiPlayer::kServerAuthorityID, ++seq_, toProto(id, next)));
   }
@@ -168,6 +266,7 @@ WorldSimulation::applyAddLocked(bool replace,
     dynamicObjects_->queueRemoveObjectsById(ids);
     apiIds_.clear();
   }
+  dirty_ = true;
   const float edge = size > 0.0f ? size : kDefaultVoxelSize;
   const glm::vec3 cubeSize(edge);
   for (std::size_t i = 0; i < positions.size(); ++i) {
@@ -211,6 +310,7 @@ WorldSimulation::applyClearBoxLocked(const glm::vec3& min,
   }
   if (!removed.empty()) {
     dynamicObjects_->queueRemoveObjectsById(removed);
+    dirty_ = true;
   }
 }
 
@@ -240,6 +340,7 @@ WorldSimulation::applyClearPositionsLocked(
   }
   if (!removed.empty()) {
     dynamicObjects_->queueRemoveObjectsById(removed);
+    dirty_ = true;
   }
 }
 
@@ -262,6 +363,7 @@ WorldSimulation::applyEntityTransformLocked(
   positionable.rotate = transform.rotate;
   positionable.scale = transform.scale;
   positionable.damage();
+  dirty_ = true;
 }
 
 std::vector<MultiPlayer::WorldSyncVoxel>

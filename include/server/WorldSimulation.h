@@ -32,6 +32,9 @@ public:
   bool load(const std::string& databasePath, std::string& error);
   // Fixed-step simulation tick. Safe without a Renderer or GL context.
   void tick();
+  // Persist Positionable rows and the runtime voxel overlay to SQLite.
+  bool save(std::string* error = nullptr);
+  bool hasPendingChanges() const;
 
   std::size_t entityCount() const;
   std::size_t positionableCount() const;
@@ -57,6 +60,7 @@ private:
     float scale = 1.0f;
   };
 
+  void loadVoxelsLocked();
   void applyAddLocked(bool replace,
                       float size,
                       const std::vector<glm::vec3>& positions,
@@ -78,6 +82,7 @@ private:
   std::unordered_set<int> apiIds_;
   std::unordered_map<std::uint32_t, CachedTransform> cachedTransforms_;
   std::uint64_t seq_ = 0;
+  bool dirty_ = false;
   Broadcast broadcast_;
   SendTo sendTo_;
   mutable std::mutex mutex_;

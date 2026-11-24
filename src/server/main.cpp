@@ -105,6 +105,7 @@ main(int argc, char** argv)
   constexpr auto kTick = std::chrono::milliseconds(50); // 20 Hz
   auto nextTick = std::chrono::steady_clock::now();
   auto nextLog = nextTick + std::chrono::seconds(5);
+  auto nextSave = nextTick + std::chrono::seconds(30);
   while (!g_stop.load()) {
     simulation.tick();
     nextTick += kTick;
@@ -115,6 +116,17 @@ main(int argc, char** argv)
                    server.clientCount(),
                    simulation.entityCount());
     }
+    if (now >= nextSave) {
+      nextSave = now + std::chrono::seconds(30);
+      if (simulation.hasPendingChanges()) {
+        std::string saveError;
+        if (simulation.save(&saveError)) {
+          spdlog::info("world saved to {}", databasePath);
+        } else {
+          spdlog::error("world save failed: {}", saveError);
+        }
+      }
+    }
     if (nextTick > now) {
       std::this_thread::sleep_until(nextTick);
     } else {
@@ -123,6 +135,14 @@ main(int argc, char** argv)
     }
   }
 
+  if (simulation.hasPendingChanges()) {
+    std::string saveError;
+    if (simulation.save(&saveError)) {
+      spdlog::info("world saved to {} on shutdown", databasePath);
+    } else {
+      spdlog::error("shutdown save failed: {}", saveError);
+    }
+  }
   spdlog::info("matrix-server stopping ({} client(s) online)",
                server.clientCount());
   server.Stop();

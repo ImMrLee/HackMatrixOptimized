@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**matrix-server 持久化**：
+  - `WorldSimulation::save()` 写回 `Positionable` 行，并用服务器专用的 `ServerVoxels` 表保存运行时体素；
+  - 启动时恢复 `Positionable` + `ServerVoxels`，首帧 snapshot 即包含恢复后的世界；
+  - 每 30 秒在 dirty 时自动保存，SIGTERM/SIGINT 退出时也保存；编辑/体素变化会标记 dirty；
+  - 实测：客户端编辑实体 + 91 体素 → 服务器停机保存 → 重启后客户端收到 `91 voxels` / `35 entities` snapshot，实体位置恢复为 `(7,3,-2)`；
+  - 服务器数据库应使用独立副本（服务器唯一写者），避免客户端退出时覆盖。
+
 - 2026-11-24：**matrix-server 接管世界 authority**：
   - 新增 `kServerAuthorityID = 0xFFFFFFFF`；`matrix-server` 以 `Server(true)` 启动，服务器固定为权威，客户端不再自己当选；
   - `Server` 增加 world-sync 出站队列和 `worldSyncHandler`：客户端发往 server authority 的 `Add/ClearBox/ClearPositions/EntityMove/EntityTransform/SnapshotRequest` 由服务器处理，不再中继；

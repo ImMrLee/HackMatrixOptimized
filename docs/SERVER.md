@@ -41,8 +41,15 @@ Options:
 - Only `Positionable` is loaded today. Model/Light persisters construct GL
   resources, so they are intentionally omitted from the headless registry until
   the visual data is made lazy/optional.
-- Edits are still in memory only: persistence, player/NPC state, admin commands
-  and the separate Arch package are next.
+- Persistence: edits are saved to SQLite every 30 s and on SIGTERM/SIGINT.
+  `Positionable` rows are written normally; the runtime voxel overlay uses a
+  server-only `ServerVoxels` table. On startup both are restored before the
+  first snapshot. Use a **server-owned database copy** (for example
+  `cp db/matrix.db /srv/hackmatrix/world.db`) so clients cannot overwrite it
+  when they persist their local scene.
+
+Still missing: player/NPC state, admin commands, Model/Light lazy loading and
+the separate Arch package.
 
 ## Why this shape
 
