@@ -37,10 +37,13 @@ public:
   void Stop();
   void PollLoop();
   bool IsRunning();
+  // Number of currently connected peers (relay sessions).
+  uint32_t clientCount() const { return connectedClients.load(); }
 
 private:
   ENetHost* server;
   std::atomic<bool> isRunning;
+  std::atomic<uint32_t> connectedClients{ 0 };
   std::thread pollThread;
   PlayerUpdate getPlayerUpdateFromEvent(ENetEvent&);
   void broadcastPlayerUpdate(PlayerUpdate);

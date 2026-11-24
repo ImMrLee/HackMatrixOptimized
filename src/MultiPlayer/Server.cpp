@@ -223,6 +223,10 @@ Server::PollLoop()
           enet_host_flush(server);
           clients.push_back(playerId);
           peers[playerId] = event.peer;
+          connectedClients.fetch_add(1);
+          spdlog::info("MultiPlayer: player {} connected ({} online)",
+                       playerId,
+                       connectedClients.load());
 
           // Elect the world authority (first client) and inform everyone.
           if (authorityID == 0) {
@@ -453,6 +457,9 @@ Server::PollLoop()
           clients.erase(
             std::remove(clients.begin(), clients.end(), playerId),
             clients.end());
+          if (connectedClients.load() > 0) {
+            connectedClients.fetch_sub(1);
+          }
 
           // Re-elect the world authority if the departing peer held it.
           if (playerId == authorityID) {

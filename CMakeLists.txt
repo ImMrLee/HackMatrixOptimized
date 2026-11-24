@@ -853,6 +853,33 @@ target_link_libraries(bootServer PRIVATE
   fmt
 )
 
+# --- Dedicated server ---------------------------------------------------------
+# First step of the headless server split: no GL, no wlroots, no ImGui. It
+# loads the scene database (read-only for now) and runs the ENet relay. World
+# simulation/snapshots will live in this target as the core is decoupled.
+option(MATRIX_BUILD_SERVER "Build the standalone matrix-server" ON)
+if(MATRIX_BUILD_SERVER)
+  add_executable(matrix-server
+    src/server/main.cpp
+    src/MultiPlayer/Server.cpp
+  )
+  target_include_directories(matrix-server PRIVATE
+    include
+    /usr/local/include
+  )
+  target_compile_options(matrix-server PRIVATE ${MATRIX_OPT_FLAGS})
+  matrix_apply_sanitizers(matrix-server)
+  if(MATRIX_WARNINGS)
+    target_compile_options(matrix-server PRIVATE -Wall -Wextra)
+  endif()
+  target_link_libraries(matrix-server PRIVATE
+    pthread
+    sqlite3
+    spdlog
+    fmt
+  )
+endif()
+
 # --- API client examples ------------------------------------------------------
 option(MATRIX_BUILD_EXAMPLES "Build API client examples (e.g. voxel_demo)" OFF)
 if(MATRIX_BUILD_EXAMPLES)

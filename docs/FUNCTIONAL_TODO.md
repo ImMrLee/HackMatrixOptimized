@@ -85,6 +85,14 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**专用服务器骨架（`matrix-server`）** 已建立：
+  - 新增 `src/server/main.cpp`，加载 `db/matrix.db`（只读）并打印 Entity/Positionable/Model/Light/Bootable 等表计数；
+  - 复用 `MultiPlayer::Server` ENet 中继，服务器控制台显示玩家连接/断开和在线人数（`Server::clientCount()`）；
+  - `matrix-server` **不链接 GL/wlroots/Wayland/GStreamer/ImGui**，`ldd` 仅见 sqlite3/spdlog/fmt 等；
+  - 当前仍是“中继 + 第一个客户端当 authority”的过渡形态，world 模拟尚未搬进服务器。
+  - 已用真实客户端连入验证：服务器日志 `player ... connected (1 online)`；`--help`/`--port`/`--db` 可用。
+  - 详见 `docs/SERVER.md`。下一步：抽出 GL-free 的 `matrix_core_server`，把 World/实体/体素模拟、snapshot/delta、持久化搬进 `matrix-server`。
+
 - 2026-11-24：**Intel/AMD（Mesa GLES）场景不显示修复**：
   - 根因：主 fragment shader 的 `allBlocks`（sampler2DArray）、`appTex`（sampler2D）和 `depthCubeMap*`（samplerCube）默认都指向 **texture unit 0**。Mesa 在 draw 时严格校验，直接返回 `GL_INVALID_OPERATION`，所有场景 draw 被丢弃；NVIDIA 的 GLES 驱动较宽容，所以之前只在 NVIDIA 上正常。
   - 修复：为每个 sampler 分配独立 unit（block=0、mesh=1..2、shadow cube=3..7、app=15），app 纹理绑定同步改到 unit 15；阴影 cubemap 的 texture unit 固定循环在 3..7，避免反复创建 light 时越界。
