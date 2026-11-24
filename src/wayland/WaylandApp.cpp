@@ -288,6 +288,17 @@ WaylandApp::requestSize(int width, int height)
 }
 
 void
+WaylandApp::setActivated(bool activated)
+{
+  if (xdg_toplevel) {
+    wlr_xdg_toplevel_set_activated(xdg_toplevel, activated);
+  }
+  if (xwayland_surface) {
+    wlr_xwayland_surface_activate(xwayland_surface, activated);
+  }
+}
+
+void
 WaylandApp::takeInputFocus()
 {
   focused = true;

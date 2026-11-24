@@ -85,6 +85,14 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**自由视角点击修复（press/release 跨帧丢失）**：
+  - 根因：`wlr_output` 每帧的 cursor-mode 清理会在准星点击的 press 与 release 之间清掉 pointer focus，客户端只收到按下、收不到松开，于是按钮高亮但不触发；键盘/滚轮也可能继续落到旧窗口；
+  - 修复：自由视角准星持有 pointer focus 时跳过错帧清理；准星 hover 保持 focus 并按射线更新/清除；release 必定发到按下的表面；
+  - 点击窗口时只设置 xdg `activated` 与 pointer focus，不发送 keyboard enter；键盘仍只在 R 时捕获；
+  - 准星命中先测屏幕空间的 popup / layer-shell，菜单与下拉框可以点击；
+  - ImGui 占用鼠标时不再把 motion/axis 泄漏给下方窗口（修复移动/滚轮菜单导致后台窗口滚动）；
+  - 实测：`weston-eventdemo` 收到左/右键 press+release（272/273），点击前后 `focus=0`；Qt 按钮输出 `CLICKED`；按 R 后 `focus=1`。
+
 - 2026-11-24：**主程序自由视角十字准星与点击直通窗口**：
   - 自由视角（光标抓取、无窗口焦点）屏幕中央绘制十字准星；光标模式与 R 锁定窗口后隐藏；
   - 左键不再把窗口“拉到面前并锁定”，改为从屏幕中心射线命中窗口后，把 press/motion/release 直接发给该窗口；右键同样直通；未命中窗口时左键仍保留体素放置；

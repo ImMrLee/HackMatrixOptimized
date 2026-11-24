@@ -15,6 +15,9 @@ public:
   virtual void focus() = 0;
   virtual void takeInputFocus() = 0;
   virtual void unfocus() = 0;
+  // Set the window's "active" look without taking keyboard focus. Used by the
+  // free-look crosshair so clicking a window does not capture the keyboard.
+  virtual void setActivated(bool activated) { (void)activated; }
   virtual bool isFocused() = 0;
 
   virtual void select() = 0;

@@ -111,6 +111,7 @@ public:
   void focus() override { focused = true; }
   void unfocus() override;
   void takeInputFocus() override;
+  void setActivated(bool activated) override;
   void requestSize(int width, int height);
   void setSeat(wlr_seat* seat, wlr_surface* surface)
   {

@@ -5,6 +5,7 @@
 #include "WindowManager/Space.h"
 #include "input_activity.h"
 #include "time_utils.h"
+
 extern "C" {
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_cursor.h>
@@ -517,6 +518,244 @@ free_view_aim_hit(WlrServer* server, WindowManager::AppRayHit& hit)
   return true;
 }
 
+struct FreeViewHit
+{
+  wlr_surface* surface = nullptr;
+  entt::entity entity = entt::null;
+  double x = 0.0;
+  double y = 0.0;
+};
+
+// Popups, menus and layer-shell panels are drawn in screen space above the
+// world. Hit-test them first so the crosshair can operate dropdowns and
+// context menus that overlap the window behind them.
+static bool
+pick_free_view_overlay(WlrServer* server, FreeViewHit& hit)
+{
+  if (!server || !server->registry || !server->primary_output) {
+    return false;
+  }
+  const double centreX =
+    static_cast<double>(server->primary_output->width) * 0.5;
+  const double centreY =
+    static_cast<double>(server->primary_output->height) * 0.5;
+
+  bool found = false;
+  auto view = server->registry->view<WaylandApp::Component>();
+  for (auto entity : view) {
+    auto& component = view.get<WaylandApp::Component>(entity);
+    if (!component.app || (!component.accessory && !component.layer_shell)) {
+      continue;
+    }
+    auto* surface = component.app->getSurface();
+    if (!surface) {
+      continue;
+    }
+    const int width = surface->current.width > 0
+                        ? surface->current.width
+                        : component.app->getWidth();
+    const int height = surface->current.height > 0
+                         ? surface->current.height
+                         : component.app->getHeight();
+    if (width <= 0 || height <= 0) {
+      continue;
+    }
+
+    double left = 0.0;
+    double top = 0.0;
+    if (component.layer_shell) {
+      left = static_cast<double>(component.screen_x);
+      top = static_cast<double>(component.screen_y);
+    } else {
+      if (!server->registry->valid(component.parent) ||
+          !server->registry->all_of<WaylandApp::Component>(
+            component.parent)) {
+        continue;
+      }
+      auto& parent =
+        server->registry->get<WaylandApp::Component>(component.parent);
+      if (!parent.app) {
+        continue;
+      }
+      const double outputWidth =
+        static_cast<double>(server->primary_output->width);
+      const double outputHeight =
+        static_cast<double>(server->primary_output->height);
+      const double parentLeft =
+        std::max(0.0, (outputWidth - parent.app->getWidth()) * 0.5);
+      const double parentTop =
+        std::max(0.0, (outputHeight - parent.app->getHeight()) * 0.5);
+      left = parentLeft + static_cast<double>(component.offset_x);
+      top = parentTop + static_cast<double>(component.offset_y);
+    }
+
+    if (centreX < left || centreX >= left + width || centreY < top ||
+        centreY >= top + height) {
+      continue;
+    }
+    // Later entities are registered later, so keep the last match as the
+    // topmost popup.
+    hit.surface = surface;
+    hit.entity = entity;
+    hit.x = centreX - left;
+    hit.y = centreY - top;
+    found = true;
+  }
+  return found;
+}
+
+static bool
+pick_free_view_hit(WlrServer* server, FreeViewHit& hit)
+{
+  if (pick_free_view_overlay(server, hit)) {
+    return true;
+  }
+
+  WindowManager::AppRayHit world;
+  if (!free_view_aim_hit(server, world)) {
+    return false;
+  }
+  wlr_surface* surface = surface_for_entity(server, world.entity);
+  if (!surface) {
+    return false;
+  }
+  hit.surface = surface;
+  hit.entity = world.entity;
+  hit.x = static_cast<double>(world.surfacePixels.x);
+  hit.y = static_cast<double>(world.surfacePixels.y);
+  return true;
+}
+
+static entt::entity
+free_view_toplevel_owner(WlrServer* server, entt::entity entity)
+{
+  if (!server || !server->registry || !server->registry->valid(entity)) {
+    return entt::null;
+  }
+  for (int depth = 0; depth < 8; ++depth) {
+    auto* component =
+      server->registry->try_get<WaylandApp::Component>(entity);
+    if (!component) {
+      return entt::null;
+    }
+    if (component->accessory && component->parent != entt::null) {
+      entity = component->parent;
+      continue;
+    }
+    return entity;
+  }
+  return entt::null;
+}
+
+static void
+deactivate_free_view_owner(WlrServer* server)
+{
+  if (!server || !server->registry ||
+      server->free_view_active_entity == entt::null ||
+      !server->registry->valid(server->free_view_active_entity)) {
+    server->free_view_active_entity = entt::null;
+    return;
+  }
+  if (auto* component = server->registry->try_get<WaylandApp::Component>(
+        server->free_view_active_entity)) {
+    if (component->app && !component->accessory &&
+        !component->layer_shell) {
+      component->app->setActivated(false);
+    }
+  }
+  server->free_view_active_entity = entt::null;
+}
+
+static void
+activate_free_view_owner(WlrServer* server, entt::entity entity)
+{
+  if (!server || !server->registry) {
+    return;
+  }
+  const entt::entity owner = free_view_toplevel_owner(server, entity);
+  if (owner == server->free_view_active_entity) {
+    return;
+  }
+  deactivate_free_view_owner(server);
+  server->free_view_active_entity = owner;
+  if (owner == entt::null || !server->registry->valid(owner)) {
+    return;
+  }
+  if (auto* component =
+        server->registry->try_get<WaylandApp::Component>(owner)) {
+    if (component->app && !component->accessory &&
+        !component->layer_shell) {
+      component->app->setActivated(true);
+    }
+  }
+}
+
+static void
+focus_free_view_hit(WlrServer* server,
+                    const FreeViewHit& hit,
+                    uint32_t time_msec)
+{
+  if (!server || !server->seat || !hit.surface) {
+    return;
+  }
+  if (server->free_view_pointer_entity == hit.entity &&
+      server->seat->pointer_state.focused_surface == hit.surface) {
+    wlr_seat_pointer_notify_motion(server->seat, time_msec, hit.x, hit.y);
+    wlr_seat_pointer_notify_frame(server->seat);
+    return;
+  }
+  server->free_view_pointer_entity = hit.entity;
+  activate_free_view_owner(server, hit.entity);
+  ensure_pointer_focus_at(server, hit.surface, hit.x, hit.y, time_msec);
+}
+
+static void
+clear_free_view_focus(WlrServer* server)
+{
+  if (!server) {
+    return;
+  }
+  server->free_view_pointer_entity = entt::null;
+  deactivate_free_view_owner(server);
+  if (!server->seat) {
+    return;
+  }
+  if (server->seat->pointer_state.focused_surface) {
+    wlr_seat_pointer_notify_clear_focus(server->seat);
+    update_pointer_constraint(server, nullptr);
+  }
+}
+
+static void
+leave_free_view_input(WlrServer* server)
+{
+  if (!server) {
+    return;
+  }
+  if (server->free_view_pointer_entity == entt::null &&
+      server->free_view_click_entity == entt::null &&
+      server->free_view_buttons.empty()) {
+    return;
+  }
+  server->free_view_pointer_entity = entt::null;
+  server->free_view_click_entity = entt::null;
+  server->free_view_buttons.clear();
+  auto wm = server->engine ? server->engine->getWindowManager() : nullptr;
+  auto focused = wm ? wm->getCurrentlyFocusedApp() : std::nullopt;
+  if (!focused.has_value()) {
+    clear_free_view_focus(server);
+    return;
+  }
+  // R took keyboard focus. Keep that window activated; deactivate only a
+  // different window that free look happened to hover.
+  if (server->free_view_active_entity != entt::null &&
+      server->free_view_active_entity != *focused) {
+    deactivate_free_view_owner(server);
+  } else {
+    server->free_view_active_entity = entt::null;
+  }
+}
+
 static bool
 deliver_free_view_button(WlrServer* server,
                          uint32_t button,
@@ -528,24 +767,16 @@ deliver_free_view_button(WlrServer* server,
   }
 
   if (pressed) {
-    WindowManager::AppRayHit hit;
-    if (!free_view_aim_hit(server, hit)) {
+    FreeViewHit hit;
+    if (!pick_free_view_hit(server, hit)) {
       return false;
     }
-    wlr_surface* surface = surface_for_entity(server, hit.entity);
-    if (!surface) {
-      return false;
-    }
+    focus_free_view_hit(server, hit, time_msec);
     server->free_view_click_entity = hit.entity;
-    server->free_view_click_x = static_cast<double>(hit.surfacePixels.x);
-    server->free_view_click_y = static_cast<double>(hit.surfacePixels.y);
+    server->free_view_click_x = hit.x;
+    server->free_view_click_y = hit.y;
     server->free_view_buttons.insert(button);
 
-    ensure_pointer_focus_at(server,
-                            surface,
-                            server->free_view_click_x,
-                            server->free_view_click_y,
-                            time_msec);
     wlr_seat_pointer_notify_button(
       server->seat, time_msec, button, WL_POINTER_BUTTON_STATE_PRESSED);
     wlr_seat_pointer_notify_frame(server->seat);
@@ -582,11 +813,12 @@ deliver_free_view_button(WlrServer* server,
 
   if (server->free_view_buttons.empty()) {
     server->free_view_click_entity = entt::null;
-    // Pointer-only focus: drop it after the click so we stay in free look and
-    // never keep keyboard focus captured.
-    if (server->seat->pointer_state.focused_surface) {
-      wlr_seat_pointer_notify_clear_focus(server->seat);
-      update_pointer_constraint(server, nullptr);
+    // Keep pointer focus on the window under the crosshair so hover state and
+    // the following click work, but drop it if the aim moved away.
+    FreeViewHit aim;
+    if (!pick_free_view_hit(server, aim) ||
+        aim.entity != server->free_view_pointer_entity) {
+      clear_free_view_focus(server);
     }
   }
   return true;
@@ -599,23 +831,29 @@ update_free_view_pointer(WlrServer* server, uint32_t time_msec)
       server->free_view_click_entity == entt::null) {
     return;
   }
-  WindowManager::AppRayHit hit;
-  if (!free_view_aim_hit(server, hit) ||
+  FreeViewHit hit;
+  if (!pick_free_view_hit(server, hit) ||
       hit.entity != server->free_view_click_entity) {
     return;
   }
-  wlr_surface* surface = surface_for_entity(server, hit.entity);
-  if (!surface ||
-      server->seat->pointer_state.focused_surface != surface) {
-    return;
+  server->free_view_click_x = hit.x;
+  server->free_view_click_y = hit.y;
+  if (server->seat->pointer_state.focused_surface == hit.surface) {
+    wlr_seat_pointer_notify_motion(
+      server->seat, time_msec, hit.x, hit.y);
+    wlr_seat_pointer_notify_frame(server->seat);
   }
-  server->free_view_click_x = static_cast<double>(hit.surfacePixels.x);
-  server->free_view_click_y = static_cast<double>(hit.surfacePixels.y);
-  wlr_seat_pointer_notify_motion(server->seat,
-                                 time_msec,
-                                 server->free_view_click_x,
-                                 server->free_view_click_y);
-  wlr_seat_pointer_notify_frame(server->seat);
+}
+
+static void
+update_free_view_hover(WlrServer* server, uint32_t time_msec)
+{
+  FreeViewHit hit;
+  if (pick_free_view_hit(server, hit)) {
+    focus_free_view_hit(server, hit, time_msec);
+  } else {
+    clear_free_view_focus(server);
+  }
 }
 
 bool
@@ -695,9 +933,18 @@ handle_pointer_motion(wl_listener* listener, void* data)
     return;
   }
 
-  if (free_view_active(handle->server) &&
-      !handle->server->free_view_buttons.empty()) {
-    update_free_view_pointer(handle->server, event->time_msec);
+  if (free_view_active(handle->server)) {
+    if (handle->server->free_view_buttons.empty()) {
+      update_free_view_hover(handle->server, event->time_msec);
+    } else {
+      update_free_view_pointer(handle->server, event->time_msec);
+    }
+    return;
+  }
+  leave_free_view_input(handle->server);
+  if (handle->server->engine &&
+      handle->server->engine->imguiWantsMouse()) {
+    // The overlay owns the pointer; never leak motion into a stale client.
     return;
   }
 
@@ -784,9 +1031,18 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
     return;
   }
 
-  if (free_view_active(handle->server) &&
-      !handle->server->free_view_buttons.empty()) {
-    update_free_view_pointer(handle->server, event->time_msec);
+  if (free_view_active(handle->server)) {
+    if (handle->server->free_view_buttons.empty()) {
+      update_free_view_hover(handle->server, event->time_msec);
+    } else {
+      update_free_view_pointer(handle->server, event->time_msec);
+    }
+    return;
+  }
+  leave_free_view_input(handle->server);
+  if (handle->server->engine &&
+      handle->server->engine->imguiWantsMouse()) {
+    // The overlay owns the pointer; never leak motion into a stale client.
     return;
   }
 
@@ -836,6 +1092,29 @@ handle_pointer_axis(wl_listener* listener, void* data)
                                     event->source,
                                     event->orientation);
     }
+    return;
+  }
+
+  const bool freeLook = free_view_active(handle->server);
+  if (!freeLook && handle->server->engine &&
+      handle->server->engine->imguiWantsMouse()) {
+    // The overlay consumes the wheel; do not scroll the last hovered window.
+    return;
+  }
+  if (freeLook) {
+    FreeViewHit hit;
+    if (!pick_free_view_hit(handle->server, hit)) {
+      return;
+    }
+    focus_free_view_hit(handle->server, hit, event->time_msec);
+    wlr_seat_pointer_notify_axis(handle->server->seat,
+                                 event->time_msec,
+                                 event->orientation,
+                                 event->delta,
+                                 event->delta_discrete,
+                                 event->source,
+                                 event->relative_direction);
+    wlr_seat_pointer_notify_frame(handle->server->seat);
     return;
   }
 
@@ -907,6 +1186,10 @@ inject_pointer_button(WlrServer* server,
     engine->updateImGuiPointer(
       server->pointer_x, server->pointer_y, server->input.mouse_buttons);
     imgui_captured = engine->imguiWantsMouse() && !freeLook;
+  }
+
+  if (!freeLook) {
+    leave_free_view_input(server);
   }
 
   if (!imgui_captured) {

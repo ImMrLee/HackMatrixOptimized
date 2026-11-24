@@ -248,6 +248,8 @@ struct WlrServer {
   // so clicking never captures the keyboard.
   std::unordered_set<uint32_t> free_view_buttons;
   entt::entity free_view_click_entity = entt::null;
+  entt::entity free_view_pointer_entity = entt::null;
+  entt::entity free_view_active_entity = entt::null;
   double free_view_click_x = 0.0;
   double free_view_click_y = 0.0;
   std::vector<wlr_xdg_surface*> pending_surfaces;

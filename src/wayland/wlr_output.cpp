@@ -400,9 +400,15 @@ handle_output_frame(wl_listener* listener, void* data)
           }
         }
       }
+      // Free-look crosshair focus is pointer-only and must survive across frames
+      // between press and release. The cursor-mode cleanup below would
+      // otherwise clear it every frame and clients would never see a click.
+      const bool freeViewPointerActive =
+        server->free_view_pointer_entity != entt::null ||
+        !server->free_view_buttons.empty();
       if (cursorOverrideSet && cursorOverrideVisible) {
         sync_cursor_mode_pointer_focus(server);
-      } else if (server->engine) {
+      } else if (server->engine && !freeViewPointerActive) {
         if (auto wm = server->engine->getWindowManager()) {
           if (!wm->getCurrentlyFocusedApp().has_value()) {
             clear_cursor_mode_input_focus(server);
@@ -420,7 +426,8 @@ handle_output_frame(wl_listener* listener, void* data)
         }
       }
       // Hide cursor and clear pointer focus when game mode is active so only deltas matter.
-      if (!pointerVisible && server->seat &&
+      // Keep free-look crosshair focus alive while it is aiming at a surface.
+      if (!pointerVisible && !freeViewPointerActive && server->seat &&
           server->seat->pointer_state.focused_surface) {
         wlr_seat_pointer_notify_clear_focus(server->seat);
         update_pointer_constraint(server, nullptr);
