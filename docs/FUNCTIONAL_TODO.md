@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**Intel/AMD（Mesa GLES）场景不显示修复**：
+  - 根因：主 fragment shader 的 `allBlocks`（sampler2DArray）、`appTex`（sampler2D）和 `depthCubeMap*`（samplerCube）默认都指向 **texture unit 0**。Mesa 在 draw 时严格校验，直接返回 `GL_INVALID_OPERATION`，所有场景 draw 被丢弃；NVIDIA 的 GLES 驱动较宽容，所以之前只在 NVIDIA 上正常。
+  - 修复：为每个 sampler 分配独立 unit（block=0、mesh=1..2、shadow cube=3..7、app=15），app 纹理绑定同步改到 unit 15；阴影 cubemap 的 texture unit 固定循环在 3..7，避免反复创建 light 时越界。
+  - 阴影 FBO 兼容：移除 GLES 不存在的 `glDrawBuffer/glReadBuffer`，改用 `glDrawBuffers(GL_NONE)`；深度 cubemap 从 `GL_DEPTH_COMPONENT + GL_FLOAT`（GLES 无效）改为 `GL_DEPTH_COMPONENT24 + GL_UNSIGNED_INT`，并检查 FBO 完整性。
+  - 0 顶点的 dynamic/line draw 增加保护，避免 Mesa 报无效 draw。
+  - **验证**：Mesa llvmpipe（OpenGL ES 3.2 / GLSL ES 3.20）headless 截图场景完整，`GL_INVALID*` 计数为 0；NVIDIA 场景/窗口截图无回归；86/86 单测通过。可用 `MESA_DEBUG=1` 复现/确认。
+
 - 2026-11-23：**中文输入（fcitx5 / text-input-v3 + input-method-v2）** 已实现：
   - compositor 新增 `zwp_text_input_manager_v3`、`zwp_input_method_manager_v2`、`zwp_virtual_keyboard_manager_v1` 三个 global；之前完全没有 IME 协议，fcitx5 即使启动也无法绑定。
   - 新增 `ImeRelay`（`src/wayland/ime.cpp`）：焦点 enter/leave、文本输入 enable/commit/disable、输入法 commit → `preedit/commit/delete/done`、键盘 grab 转发、候选窗口 popup surface。

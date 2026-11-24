@@ -4,12 +4,16 @@
 #include <sstream>
 #include <iostream>
 #include "stb/stb_image_write.h"
+#include <spdlog/spdlog.h>
 #include "tracy/TracyOpenGL.hpp"
 
-unsigned int Light::nextTextureUnit = 20;
+unsigned int Light::nextTextureUnit = 0;
 
 Light::Light(glm::vec3 color): color(color) {
-  textureUnit = nextTextureUnit++;
+  // The fragment shader samples at most five cube maps. Keep their units in a
+  // fixed 3..7 window so repeated light creation/deletion cannot walk past the
+  // GL_MAX_TEXTURE_IMAGE_UNITS limit (and never collide with appTex=15).
+  textureUnit = 3 + (nextTextureUnit++ % 5);
   farPlane = 50.0f;
   nearPlane = 0.02f;
 
@@ -21,8 +25,8 @@ Light::Light(glm::vec3 color): color(color) {
   // Allocate storage for each face of the depth cubemap
   for (unsigned int i = 0; i < 6; ++i) {
     glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0,
-        GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT,
-        0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL); 
+        GL_DEPTH_COMPONENT24, SHADOW_WIDTH, SHADOW_HEIGHT,
+        0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
   }
 
   glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -37,8 +41,16 @@ Light::Light(glm::vec3 color): color(color) {
 
   glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthCubemap, 0);
 
-  glDrawBuffer(GL_NONE);
-  glReadBuffer(GL_NONE);
+  // GLES has no glDrawBuffer/glReadBuffer. A depth-only FBO needs an explicit
+  // GL_NONE draw buffer; without it some Mesa drivers report the FBO incomplete.
+  if (glad_glDrawBuffers != nullptr) {
+    GLenum none = GL_NONE;
+    glad_glDrawBuffers(1, &none);
+  }
+  GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (status != GL_FRAMEBUFFER_COMPLETE) {
+    spdlog::warn("Light: shadow FBO incomplete (0x{:x})", static_cast<unsigned>(status));
+  }
 
   glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
 }

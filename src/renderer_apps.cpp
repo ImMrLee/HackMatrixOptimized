@@ -56,7 +56,7 @@ Renderer::drawAppDirect(AppSurface* app, Bootable* bootable)
         GL_NEAREST);
       glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
     } else {
-      glActiveTexture(GL_TEXTURE0);
+      glActiveTexture(GL_TEXTURE15);
       glBindTexture(GL_TEXTURE_2D, app->getTextureId());
       glBindVertexArray(DIRECT_RENDER_VAO);
       shader->setBool("directRender", true);
@@ -167,7 +167,7 @@ Renderer::renderApps()
   glDisable(GL_CULL_FACE);
 
   auto bindAppTexture = [&](WaylandApp* app) {
-    glActiveTexture(GL_TEXTURE0);
+    glActiveTexture(GL_TEXTURE15);
     glBindTexture(GL_TEXTURE_2D, app->getTextureId());
     return true;
   };
@@ -285,7 +285,7 @@ Renderer::renderApps()
       continue;
     }
     app->appTexture();
-    glActiveTexture(GL_TEXTURE0);
+    glActiveTexture(GL_TEXTURE15);
     glBindTexture(GL_TEXTURE_2D, app->getTextureId());
     shader->setBool("appTransparent", false);
     shader->setMatrix4("model", positionable.modelMatrix);
@@ -342,7 +342,7 @@ Renderer::registerApp(AppSurface* app)
   if (!app) {
     return;
   }
-  // Use index 0 slot, unit 0; avoids consuming extra texture units.
+  // Register the app texture once; rendering binds it on unit 15.
   auto textureId = app->createTexture();
   app->appTexture();
 

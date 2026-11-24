@@ -209,8 +209,10 @@ Renderer::Renderer(shared_ptr<EntityRegistry> registry,
   shader->use(); // may need to move into loop to use changing uniforms
 
   shader->setInt("allBlocks", 0);
-  // apps are on texture unit 0
-  shader->setInt("appTex", 0);
+  // Keep every sampler on a distinct unit: Mesa validates this at draw time,
+  // while NVIDIA's GLES driver is more permissive.
+  // 0 = block array, 1..2 = mesh textures, 3..7 = shadow cubes, 15 = app.
+  shader->setInt("appTex", 15);
   shader->setInt("totalBlockTypes", images.size());
   shader->setBool("SHADOWS_ENABLED", shadowsEnabled);
 
@@ -488,7 +490,9 @@ Renderer::renderDynamicObjects()
   shader->setBool("isLine", false);
   glBindBuffer(GL_ARRAY_BUFFER, DYNAMIC_OBJECT_POSITIONS);
   glBindVertexArray(DYNAMIC_OBJECT_VERTEX);
-  glDrawArrays(GL_TRIANGLES, 0, verticesInDynamicObjects);
+  if (verticesInDynamicObjects > 0) {
+    glDrawArrays(GL_TRIANGLES, 0, verticesInDynamicObjects);
+  }
   shader->setBool("isDynamicObject", false);
 }
 
@@ -649,7 +653,9 @@ Renderer::renderLines()
   }
   glLineWidth(2.5f);
   glBindVertexArray(LINE_VAO);
-  glDrawArrays(GL_LINES, 0, world->getLines().size() * 2);
+  if (!world->getLines().empty()) {
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(world->getLines().size() * 2));
+  }
   if (depthEnabled) {
     glEnable(GL_DEPTH_TEST);
   }
