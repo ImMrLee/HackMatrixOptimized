@@ -662,6 +662,15 @@ Client::hasPeerSceneInfo() const
 }
 
 bool
+Client::canShareWindows() const
+{
+  if (!hasLocalScene() || hasSceneMismatch()) {
+    return false;
+  }
+  return hasPeerSceneInfo() || worldAuthorityID() == kServerAuthorityID;
+}
+
+bool
 Client::sceneMatches(uint32_t playerID) const
 {
   std::lock_guard<std::mutex> lock(sceneMutex);
@@ -796,9 +805,9 @@ Client::setWindowShared(entt::entity entity, bool shared)
   }
 
   // Local state is always recorded so the panel can remember the intent.
-  // Actual streaming only starts when a matching peer is connected.
-  if (!isConnected() || peer == nullptr || !hasPeerSceneInfo() ||
-      !hasLocalScene() || hasSceneMismatch()) {
+  // Actual streaming only starts when the scene is usable; a dedicated server
+  // keeps the share for players who join later.
+  if (!isConnected() || peer == nullptr || !canShareWindows()) {
     return;
   }
 
@@ -996,8 +1005,7 @@ Client::sendWindowShareTransform(uint32_t shareId,
 void
 Client::syncWindowShares()
 {
-  if (!isConnected() || peer == nullptr || !hasPeerSceneInfo() ||
-      !hasLocalScene() || hasSceneMismatch()) {
+  if (!isConnected() || peer == nullptr || !canShareWindows()) {
     return;
   }
 

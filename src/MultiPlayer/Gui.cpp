@@ -5,6 +5,7 @@
 #include "model.h"
 #include "remote_app.h"
 #include "wayland_app.h"
+#include "world_sync_protocol.h"
 #include "imgui.h"
 #include <algorithm>
 #include <cstdlib>
@@ -103,6 +104,11 @@ Gui::Render()
       } else if (activeClient->hasPeerSceneInfo()) {
         ImGui::TextColored(ImVec4(0.45f, 1.0f, 0.45f, 1.0f),
                            "Scenes match: window sharing available");
+      } else if (activeClient->worldAuthorityID() ==
+                 MultiPlayer::kServerAuthorityID) {
+        ImGui::TextColored(
+          ImVec4(0.45f, 1.0f, 0.45f, 1.0f),
+          "Dedicated server: window sharing available (held for joining players)");
       } else {
         ImGui::TextDisabled("Waiting for peer scene info...");
       }
@@ -149,7 +155,9 @@ Gui::Render()
       const bool localSceneReady = activeClient->hasLocalScene();
       const bool sceneKnown = activeClient->hasPeerSceneInfo();
       const bool sceneMismatch = activeClient->hasSceneMismatch();
-      const bool canShare = localSceneReady && sceneKnown && !sceneMismatch;
+      const bool serverWorld =
+        activeClient->worldAuthorityID() == MultiPlayer::kServerAuthorityID;
+      const bool canShare = activeClient->canShareWindows();
 
       auto registry = engine ? engine->getRegistry() : nullptr;
       if (!registry) {
@@ -284,11 +292,14 @@ Gui::Render()
           if (!localSceneReady) {
             ImGui::TextWrapped(
               "Waiting for the local scene fingerprint before sharing");
-          } else if (!sceneKnown) {
-            ImGui::TextWrapped(
-              "Waiting for peer scene info before sharing");
           } else if (sceneMismatch) {
             ImGui::TextWrapped("Scene mismatch: sharing disabled");
+          } else if (!sceneKnown && !serverWorld) {
+            ImGui::TextWrapped(
+              "Waiting for peer scene info before sharing");
+          } else if (!sceneKnown) {
+            ImGui::TextWrapped(
+              "Dedicated server: shares are kept for players who join later");
           } else {
             ImGui::TextWrapped(
               "Shared windows stream to other players (H.264, MJPEG fallback)");

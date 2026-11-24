@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**专用服务器单人预共享窗口**：
+  - 问题：旧逻辑要求先收到 peer 的 scene fingerprint 才允许勾选 Share，连专用服务器且只有一人时一直显示 “Waiting for peer scene info...”，无法共享；
+  - 新增 `Client::canShareWindows()`：本地场景就绪且无 mismatch 时，若已有 peer fingerprint **或** 当前 authority 是 `kServerAuthorityID` 即允许共享；
+  - 服务器本来就会缓存 `Start/Transform/ControlState` 并在新玩家发送 scene info 后回放，因此单人先共享的窗口会在其他玩家加入后出现；接收端仍按 fingerprint 拒绝不匹配的共享；
+  - UI 在专用服务器模式下显示 “Dedicated server: window sharing available (held for joining players)”；
+  - 实测：单人连专用服务器 + 打开终端窗口即可 `sharing window 'Wayland Terminal' as share 1`；第二个客户端稍后加入收到 `showing shared window 'Wayland Terminal' from player ...`；`bootServer`（客户端当 authority）仍保持旧行为，单人不会提前共享。
+
 - 2026-11-24：**matrix-server 玩家状态服务器化（第一版）**：
   - 服务器维护玩家列表/出生点：连接时分配 spawn、广播 `PLAYER_JOIN`，把现有玩家状态发给新玩家，并广播新玩家状态；
   - `PLAYER_UPDATE` 由服务器保存并广播；新增 `PLAYER_LEAVE`（channel 9），断线/超时后广播，客户端 `systems::unregisterPlayer` 删除远端头像；

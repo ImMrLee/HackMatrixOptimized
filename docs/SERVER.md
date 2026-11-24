@@ -34,6 +34,10 @@ Options:
   player state to a newcomer, broadcasts `PLAYER_JOIN`/`PLAYER_UPDATE`, and
   broadcasts `PLAYER_LEAVE` (channel 9) on disconnect. Clients destroy the
   corresponding avatar entity on leave.
+- Window sharing works without another player online: clients connected to the
+  dedicated server may pre-share a window. The server caches `Start`/`Transform`
+  /`ControlState` and replays them when a newcomer sends its scene fingerprint;
+  receivers still reject shares whose fingerprint does not match.
 - Starts the existing ENet relay (`MultiPlayer::Server`), accepts players and
   reports connected/disconnected players and the online count.
 - Does **not** link OpenGL, wlroots, Wayland, X11, GStreamer or ImGui.

@@ -67,6 +67,11 @@ public:
   bool isComputingScene() const;
   bool hasSceneMismatch() const;
   bool hasPeerSceneInfo() const;
+  // Window sharing normally waits for a matching peer fingerprint. With the
+  // dedicated server owning the world there may be no peer yet, so a lone
+  // player can pre-share; the server caches the share and replays it to late
+  // joiners, and every receiver still validates the sender's fingerprint.
+  bool canShareWindows() const;
   bool hasSceneInfoFor(uint32_t playerID) const;
   bool sceneMatches(uint32_t playerID) const;
   std::vector<uint32_t> mismatchedPeers() const;
