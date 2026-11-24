@@ -17,6 +17,10 @@ namespace MultiPlayer {
 //
 // Header: type u8, targetOwner u32, senderID u32, seq u64.
 // targetOwner == 0 means broadcast; otherwise the relay unicasts to that peer.
+// Reserved authority ID used when the dedicated server owns the world. ENet
+// connect IDs are random; this sentinel is never treated as a peer target.
+constexpr std::uint32_t kServerAuthorityID = 0xFFFFFFFFu;
+
 constexpr std::size_t kWorldSyncHeaderSize = 17;
 constexpr std::size_t kWorldSyncTargetOffset = 1;
 constexpr std::size_t kWorldSyncSenderOffset = 5;

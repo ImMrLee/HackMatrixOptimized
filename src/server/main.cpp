@@ -82,7 +82,20 @@ main(int argc, char** argv)
   std::signal(SIGINT, handleSignal);
   std::signal(SIGTERM, handleSignal);
 
-  MultiPlayer::Server server;
+  MultiPlayer::Server server(/*authoritative=*/true);
+  simulation.setBroadcast([&server](const std::vector<std::uint8_t>& bytes) {
+    server.broadcastWorldSync(bytes);
+  });
+  simulation.setSendTo([&server](std::uint32_t target,
+                                 const std::vector<std::uint8_t>& bytes) {
+    server.sendWorldSyncTo(target, bytes);
+  });
+  server.setWorldSyncHandler(
+    [&simulation](std::uint32_t sender,
+                  const std::uint8_t* data,
+                  std::size_t size) {
+      simulation.handleClientWorldSync(sender, data, size);
+    });
   if (!server.Start(port)) {
     spdlog::error("failed to start ENet server on UDP {}", port);
     return 1;

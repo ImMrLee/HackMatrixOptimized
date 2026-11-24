@@ -15,9 +15,10 @@
 
 namespace MultiPlayer {
 
-Server::Server()
+Server::Server(bool authoritative)
   : server(nullptr)
   , isRunning(false)
+  , authoritative(authoritative)
 {
   if (enet_initialize() != 0) {
     spdlog::error("MultiPlayer: failed to initialize enet (server)");
@@ -104,6 +105,66 @@ Server::broadcastSceneInfo(uint32_t playerID,
 }
 
 void
+Server::setWorldSyncHandler(WorldSyncHandler handler)
+{
+  std::lock_guard<std::mutex> lock(worldOutMutex_);
+  worldSyncHandler_ = std::move(handler);
+}
+
+void
+Server::broadcastWorldSync(const std::vector<uint8_t>& bytes)
+{
+  if (bytes.empty()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(worldOutMutex_);
+  worldOutbox_.push_back(OutboundWorldSync{ 0, bytes });
+}
+
+void
+Server::sendWorldSyncTo(uint32_t target, const std::vector<uint8_t>& bytes)
+{
+  if (target == 0 || bytes.empty()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(worldOutMutex_);
+  worldOutbox_.push_back(OutboundWorldSync{ target, bytes });
+}
+
+void
+Server::flushWorldOutbox(const std::unordered_map<uint32_t, ENetPeer*>& peers)
+{
+  std::vector<OutboundWorldSync> outbox;
+  {
+    std::lock_guard<std::mutex> lock(worldOutMutex_);
+    outbox.swap(worldOutbox_);
+  }
+  bool sent = false;
+  for (const auto& entry : outbox) {
+    ENetPacket* packet = enet_packet_create(
+      entry.bytes.data(), entry.bytes.size(), ENET_PACKET_FLAG_RELIABLE);
+    if (packet == nullptr) {
+      continue;
+    }
+    if (entry.target == 0) {
+      enet_host_broadcast(server, WORLD_SYNC, packet);
+      sent = true;
+    } else {
+      auto target = peers.find(entry.target);
+      if (target != peers.end() && target->second != nullptr &&
+          enet_peer_send(target->second, WORLD_SYNC, packet) == 0) {
+        sent = true;
+      } else {
+        enet_packet_destroy(packet);
+      }
+    }
+  }
+  if (sent) {
+    enet_host_flush(server);
+  }
+}
+
+void
 Server::PollLoop()
 {
   struct CachedShare
@@ -153,9 +214,9 @@ Server::PollLoop()
     enet_host_flush(server);
   };
 
-  // F14a: the first connected client is the world authority. On its departure
-  // the next remaining client takes over so world sync keeps a single source.
-  uint32_t authorityID = 0;
+  // The dedicated server owns the authority; relay-only sessions still elect
+  // the first connected client.
+  uint32_t authorityID = authoritative ? kServerAuthorityID : 0;
   auto broadcastAuthority = [&]() {
     const auto bytes = encodeWorldAuthority(authorityID);
     ENetPacket* packet = enet_packet_create(
@@ -169,6 +230,7 @@ Server::PollLoop()
   ENetEvent event;
   auto lastPing = std::chrono::steady_clock::now();
   while (isRunning) {
+    flushWorldOutbox(peers);
     // ENet only arms its peer timeout while reliable commands are in flight.
     // Ping every 2 s so a crashed client is detected instead of lingering as a
     // phantom player (and, for F14a, as a phantom world authority).
@@ -228,8 +290,7 @@ Server::PollLoop()
                        playerId,
                        connectedClients.load());
 
-          // Elect the world authority (first client) and inform everyone.
-          if (authorityID == 0) {
+          if (!authoritative && authorityID == 0) {
             authorityID = playerId;
           }
           broadcastAuthority();
@@ -410,22 +471,35 @@ Server::PollLoop()
               if (worldSyncTargetOwner(event.packet->data,
                                        event.packet->dataLength,
                                        targetOwner)) {
-                ENetPacket* relay = enet_packet_create(
-                  event.packet->data,
-                  event.packet->dataLength,
-                  ENET_PACKET_FLAG_RELIABLE);
-                if (relay != nullptr) {
-                  if (targetOwner == 0) {
-                    enet_host_broadcast(server, WORLD_SYNC, relay);
-                    enet_host_flush(server);
-                  } else {
-                    auto target = peers.find(targetOwner);
-                    if (target != peers.end() && target->second != nullptr &&
-                        enet_peer_send(target->second, WORLD_SYNC, relay) ==
-                          0) {
+                if (authoritative && targetOwner == kServerAuthorityID) {
+                  WorldSyncHandler handler;
+                  {
+                    std::lock_guard<std::mutex> lock(worldOutMutex_);
+                    handler = worldSyncHandler_;
+                  }
+                  if (handler) {
+                    handler(event.peer->connectID,
+                            static_cast<const uint8_t*>(event.packet->data),
+                            event.packet->dataLength);
+                  }
+                } else {
+                  ENetPacket* relay = enet_packet_create(
+                    event.packet->data,
+                    event.packet->dataLength,
+                    ENET_PACKET_FLAG_RELIABLE);
+                  if (relay != nullptr) {
+                    if (targetOwner == 0) {
+                      enet_host_broadcast(server, WORLD_SYNC, relay);
                       enet_host_flush(server);
                     } else {
-                      enet_packet_destroy(relay);
+                      auto target = peers.find(targetOwner);
+                      if (target != peers.end() && target->second != nullptr &&
+                          enet_peer_send(target->second, WORLD_SYNC, relay) ==
+                            0) {
+                        enet_host_flush(server);
+                      } else {
+                        enet_packet_destroy(relay);
+                      }
                     }
                   }
                 }
@@ -460,12 +534,11 @@ Server::PollLoop()
           if (connectedClients.load() > 0) {
             connectedClients.fetch_sub(1);
           }
-
-          // Re-elect the world authority if the departing peer held it.
-          if (playerId == authorityID) {
+          if (!authoritative && playerId == authorityID) {
             authorityID = clients.empty() ? 0 : clients.front();
             broadcastAuthority();
           }
+
 
           // Tell the remaining peers to drop every window shared by this
           // player, so remote windows do not outlive their owner.

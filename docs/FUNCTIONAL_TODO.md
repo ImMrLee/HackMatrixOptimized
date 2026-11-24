@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**matrix-server 接管世界 authority**：
+  - 新增 `kServerAuthorityID = 0xFFFFFFFF`；`matrix-server` 以 `Server(true)` 启动，服务器固定为权威，客户端不再自己当选；
+  - `Server` 增加 world-sync 出站队列和 `worldSyncHandler`：客户端发往 server authority 的 `Add/ClearBox/ClearPositions/EntityMove/EntityTransform/SnapshotRequest` 由服务器处理，不再中继；
+  - `WorldSimulation` 增加无 GL 的体素 overlay（`DynamicObjectSpace`）、实体变换缓存/扫描、snapshot/delta 广播；客户端编辑经服务器应用后以 `seq` 广播；
+  - `bootServer`/客户端开服保持旧模式（`Server(false)`，首个客户端当 authority），避免破坏现有联机；
+  - 验证：客户端收到 `authority = 4294967295` + `world/entity snapshot`；`voxel_demo` 从客户端发 91 体素 → 服务器应用 → 客户端收到 `authoritative add seq 1`；`EDIT_COMPONENT` 转发后客户端读到新坐标；主客户端/86 单测无回归。
+
 - 2026-11-24：**matrix-server Phase 2（无 GL 世界 tick）**：
   - 把 `Positionable` 与 `PositionablePersister` 从 `src/model.cpp` 拆到 `src/components/Positionable.cpp`，避免服务器为了位置数据链接 Model/Assimp/GL；
   - `EntityRegistry` 新增显式数据库路径构造，服务器不再依赖 `Config::database_file`；

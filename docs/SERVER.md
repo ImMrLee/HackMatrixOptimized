@@ -25,16 +25,24 @@ Options:
   `EntityRegistry` (see `src/server/WorldSimulation.cpp`).
 - Ticks the GL-free movement systems at 20 Hz (`applyRotation`,
   `applyTranslations`, damaged transform updates).
+- **Owns the world authority**: it advertises `kServerAuthorityID`
+  (`0xFFFFFFFF`) on channel 8. Clients forward voxel/entity edits to the server;
+  the server applies them, increments the sequence and broadcasts snapshots /
+  deltas back. Late joiners receive a voxel + entity snapshot.
+- Maintains the runtime voxel overlay (`DynamicObjectSpace`) without GL.
 - Starts the existing ENet relay (`MultiPlayer::Server`), accepts players and
   reports connected/disconnected players and the online count.
 - Does **not** link OpenGL, wlroots, Wayland, X11, GStreamer or ImGui.
   `ldd build/matrix-server` should show only libc, sqlite3, enet (header
   implementation), spdlog/fmt and their dependencies.
-- Still uses the first connected client as the F14a world authority; authority
-  migration and player/world snapshots are the next step.
+- `bootServer` and client-hosted sessions still use the old behavior
+  (`Server(false)`: first connected client is the authority). Only
+  `matrix-server` constructs `Server(true)`.
 - Only `Positionable` is loaded today. Model/Light persisters construct GL
   resources, so they are intentionally omitted from the headless registry until
   the visual data is made lazy/optional.
+- Edits are still in memory only: persistence, player/NPC state, admin commands
+  and the separate Arch package are next.
 
 ## Why this shape
 

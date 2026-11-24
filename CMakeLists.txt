@@ -867,8 +867,10 @@ if(MATRIX_BUILD_SERVER)
     src/Config.cpp
     src/components/Positionable.cpp
     src/persister.cpp
+    src/dynamicObject.cpp
     src/systems/ApplyRotation.cpp
     src/systems/ApplyTranslation.cpp
+    src/systems/Move.cpp
     src/time_utils.cpp
     src/MultiPlayer/Server.cpp
     ${SERVER_SQLITE_SOURCES}
