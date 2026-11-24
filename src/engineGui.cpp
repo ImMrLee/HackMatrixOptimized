@@ -132,6 +132,44 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
     ImGui::EndTabBar(); // Close the tab bar
   }
   ImGui::End();
+
+  // Free-look crosshair: the centre ray is what clicks and R aim with, so show
+  // it whenever the cursor is grabbed and no window owns the input.
+  if (auto* controls = engine->getControls()) {
+    auto wm = engine->getWindowManager();
+    if (controls->isCursorGrabbed() && wm &&
+        !wm->hasCurrentOrPendingFocus()) {
+      ImDrawList* draw = ImGui::GetForegroundDrawList();
+      const float cx = io.DisplaySize.x * 0.5f;
+      const float cy = io.DisplaySize.y * 0.5f;
+      constexpr float gap = 4.0f;
+      constexpr float arm = 7.0f;
+      const auto cross = [&](ImU32 color, float thickness) {
+        draw->AddLine(ImVec2(cx - gap - arm, cy),
+                      ImVec2(cx - gap, cy),
+                      color,
+                      thickness);
+        draw->AddLine(ImVec2(cx + gap, cy),
+                      ImVec2(cx + gap + arm, cy),
+                      color,
+                      thickness);
+        draw->AddLine(ImVec2(cx, cy - gap - arm),
+                      ImVec2(cx, cy - gap),
+                      color,
+                      thickness);
+        draw->AddLine(ImVec2(cx, cy + gap),
+                      ImVec2(cx, cy + gap + arm),
+                      color,
+                      thickness);
+      };
+      cross(IM_COL32(0, 0, 0, 180), 3.0f);
+      cross(IM_COL32(255, 255, 255, 220), 1.0f);
+      draw->AddCircleFilled(ImVec2(cx, cy),
+                            1.25f,
+                            IM_COL32(255, 255, 255, 220));
+    }
+  }
+
   engine->setImguiWantsMouse(ImGui::GetIO().WantCaptureMouse);
   engine->renderImguiOverlays();
   ImGui::Render();

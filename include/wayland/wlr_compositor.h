@@ -243,6 +243,13 @@ struct WlrServer {
   xkb_keysym_t pendingReplayModifierSym = XKB_KEY_NoSymbol;
   std::vector<ReplayKeyRelease> pendingReplayKeyups;
   std::unordered_map<wlr_surface*, entt::entity> surface_map;
+  // Free-look crosshair click-through: buttons held on the app under the
+  // centre ray. Focus is pointer-only and is cleared when all buttons release,
+  // so clicking never captures the keyboard.
+  std::unordered_set<uint32_t> free_view_buttons;
+  entt::entity free_view_click_entity = entt::null;
+  double free_view_click_x = 0.0;
+  double free_view_click_y = 0.0;
   std::vector<wlr_xdg_surface*> pending_surfaces;
   std::vector<PendingWlAction> pending_wl_actions;
   double pointer_x = 0.0;

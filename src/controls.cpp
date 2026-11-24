@@ -536,22 +536,20 @@ Controls::handlePointerButton(uint32_t button, bool pressed)
   if (!debounce(lastClickTime)) {
     return false;
   }
-  if (button == static_cast<uint32_t>(BTN_LEFT)) {
-    if (grabbedCursor) {
-      auto app = windowManagerSpace ? windowManagerSpace->getLookedAtApp()
-                                    : std::optional<entt::entity>();
-      if (app.has_value()) {
-        goToApp(app.value());
-        return true;
-      }
-      world->action(PLACE_VOXEL);
-      return true;
-    }
-  }
-  if (button == static_cast<uint32_t>(BTN_RIGHT)) {
-    // Placeholder for remove voxel or alternate interaction.
+  if (!grabbedCursor) {
     return false;
   }
+  // In free look the crosshair delivers clicks straight to the window under
+  // it; only the world (no window hit) uses the voxel action. Heading towards a
+  // window must not grab/lock it: press R for that.
+  if (windowManagerSpace && windowManagerSpace->getLookedAtApp().has_value()) {
+    return false;
+  }
+  if (button == static_cast<uint32_t>(BTN_LEFT)) {
+    world->action(PLACE_VOXEL);
+    return true;
+  }
+  // Right click is reserved for window interaction; it has no world action.
   return false;
 }
 

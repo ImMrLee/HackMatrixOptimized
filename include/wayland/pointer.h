@@ -11,6 +11,13 @@ struct wlr_surface;
 // handles an event when a new physical pointer device is created
 void handle_new_pointer(WlrServer* server, wlr_input_device* device);
 
+// Route a pointer button through the same path as a physical mouse. Used by
+// POINTER_REPLAY so headless tests exercise crosshair click-through.
+bool inject_pointer_button(WlrServer* server,
+                           uint32_t button,
+                           bool pressed,
+                           uint32_t time_msec = 0);
+
 bool wayland_pointer_focus_requested(WlrServer* server);
 bool wayland_pointer_locked(WlrServer* server);
 void update_pointer_constraint(WlrServer* server, wlr_surface* focused_surface);

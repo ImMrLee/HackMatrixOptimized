@@ -207,6 +207,12 @@ Engine::initializeMemberObjs()
       keyInjector_(sym, pressed);
     }
   });
+  api->setPointerInjector([this](std::uint32_t button, bool pressed) {
+    if (pointerInjector_) {
+      return pointerInjector_(button, pressed);
+    }
+    return false;
+  });
   if (wm) {
     wm->registerControls(controls.get());
   }

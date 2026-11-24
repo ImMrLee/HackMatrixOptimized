@@ -470,6 +470,154 @@ _pick_any_surface(WlrServer* server)
   return { nullptr, entt::null };
 }
 
+// Free look owns the screen centre: there is no cursor to raycast from, so
+// click-through always aims along the centre ray.
+static bool
+free_view_active(WlrServer* server)
+{
+  if (!server || !server->engine) {
+    return false;
+  }
+  auto* controls = server->engine->getControls();
+  auto wm = server->engine->getWindowManager();
+  if (!controls || !wm || !controls->isCursorGrabbed()) {
+    return false;
+  }
+  return !wm->hasCurrentOrPendingFocus();
+}
+
+static bool
+free_view_aim_hit(WlrServer* server, WindowManager::AppRayHit& hit)
+{
+  if (!server || !server->engine || !server->primary_output) {
+    return false;
+  }
+  auto wm = server->engine->getWindowManager();
+  if (!wm) {
+    return false;
+  }
+  auto space = wm->getSpace();
+  if (!space) {
+    return false;
+  }
+  const float width = static_cast<float>(server->primary_output->width);
+  const float height = static_cast<float>(server->primary_output->height);
+  if (width <= 0.0f || height <= 0.0f) {
+    return false;
+  }
+  // A window can be clicked anywhere it is visible, not just within R's
+  // go-to range. The nearest hit still wins, so this only widens reach.
+  constexpr float kCrosshairRayDistance = 10000.0f;
+  auto found = space->raycastAppFromScreen(
+    width * 0.5f, height * 0.5f, width, height, kCrosshairRayDistance);
+  if (!found.has_value()) {
+    return false;
+  }
+  hit = *found;
+  return true;
+}
+
+static bool
+deliver_free_view_button(WlrServer* server,
+                         uint32_t button,
+                         bool pressed,
+                         uint32_t time_msec)
+{
+  if (!server || !server->seat) {
+    return false;
+  }
+
+  if (pressed) {
+    WindowManager::AppRayHit hit;
+    if (!free_view_aim_hit(server, hit)) {
+      return false;
+    }
+    wlr_surface* surface = surface_for_entity(server, hit.entity);
+    if (!surface) {
+      return false;
+    }
+    server->free_view_click_entity = hit.entity;
+    server->free_view_click_x = static_cast<double>(hit.surfacePixels.x);
+    server->free_view_click_y = static_cast<double>(hit.surfacePixels.y);
+    server->free_view_buttons.insert(button);
+
+    ensure_pointer_focus_at(server,
+                            surface,
+                            server->free_view_click_x,
+                            server->free_view_click_y,
+                            time_msec);
+    wlr_seat_pointer_notify_button(
+      server->seat, time_msec, button, WL_POINTER_BUTTON_STATE_PRESSED);
+    wlr_seat_pointer_notify_frame(server->seat);
+    return true;
+  }
+
+  if (server->free_view_buttons.find(button) ==
+      server->free_view_buttons.end()) {
+    return false;
+  }
+  server->free_view_buttons.erase(button);
+
+  wlr_surface* surface =
+    surface_for_entity(server, server->free_view_click_entity);
+  if (surface) {
+    if (server->seat->pointer_state.focused_surface != surface) {
+      // Re-enter at the last aim point so the release reaches the app even if
+      // the window was re-mapped or focus was cleared meanwhile.
+      ensure_pointer_focus_at(server,
+                              surface,
+                              server->free_view_click_x,
+                              server->free_view_click_y,
+                              time_msec);
+    } else {
+      wlr_seat_pointer_notify_motion(server->seat,
+                                     time_msec,
+                                     server->free_view_click_x,
+                                     server->free_view_click_y);
+    }
+    wlr_seat_pointer_notify_button(
+      server->seat, time_msec, button, WL_POINTER_BUTTON_STATE_RELEASED);
+    wlr_seat_pointer_notify_frame(server->seat);
+  }
+
+  if (server->free_view_buttons.empty()) {
+    server->free_view_click_entity = entt::null;
+    // Pointer-only focus: drop it after the click so we stay in free look and
+    // never keep keyboard focus captured.
+    if (server->seat->pointer_state.focused_surface) {
+      wlr_seat_pointer_notify_clear_focus(server->seat);
+      update_pointer_constraint(server, nullptr);
+    }
+  }
+  return true;
+}
+
+static void
+update_free_view_pointer(WlrServer* server, uint32_t time_msec)
+{
+  if (!server || !server->seat || server->free_view_buttons.empty() ||
+      server->free_view_click_entity == entt::null) {
+    return;
+  }
+  WindowManager::AppRayHit hit;
+  if (!free_view_aim_hit(server, hit) ||
+      hit.entity != server->free_view_click_entity) {
+    return;
+  }
+  wlr_surface* surface = surface_for_entity(server, hit.entity);
+  if (!surface ||
+      server->seat->pointer_state.focused_surface != surface) {
+    return;
+  }
+  server->free_view_click_x = static_cast<double>(hit.surfacePixels.x);
+  server->free_view_click_y = static_cast<double>(hit.surfacePixels.y);
+  wlr_seat_pointer_notify_motion(server->seat,
+                                 time_msec,
+                                 server->free_view_click_x,
+                                 server->free_view_click_y);
+  wlr_seat_pointer_notify_frame(server->seat);
+}
+
 bool
 wayland_pointer_focus_requested(WlrServer* server)
 {
@@ -544,6 +692,12 @@ handle_pointer_motion(wl_listener* listener, void* data)
       client->sendRemotePointerMotion(hit->surfacePixels.x,
                                       hit->surfacePixels.y);
     }
+    return;
+  }
+
+  if (free_view_active(handle->server) &&
+      !handle->server->free_view_buttons.empty()) {
+    update_free_view_pointer(handle->server, event->time_msec);
     return;
   }
 
@@ -630,6 +784,12 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
     return;
   }
 
+  if (free_view_active(handle->server) &&
+      !handle->server->free_view_buttons.empty()) {
+    update_free_view_pointer(handle->server, event->time_msec);
+    return;
+  }
+
   bool focusRequested = wayland_pointer_focus_requested(handle->server);
   if (hover_focus_enabled(handle->server)) {
     if (auto hovered = pick_hovered_surface(handle->server)) {
@@ -706,79 +866,96 @@ handle_pointer_axis(wl_listener* listener, void* data)
   }
 }
 
-void handle_pointer_button(wl_listener* listener, void* data)
+bool
+inject_pointer_button(WlrServer* server,
+                      uint32_t button,
+                      bool pressed,
+                      uint32_t time_msec)
 {
-  auto* handle =
-    wl_container_of(listener, static_cast<WlrPointerHandle*>(nullptr), button);
-  auto* event = static_cast<wlr_pointer_button_event*>(data);
+  if (!server) {
+    return false;
+  }
+  if (time_msec == 0) {
+    const uint64_t now_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+    time_msec = static_cast<uint32_t>(now_ms & 0xffffffff);
+  }
+
   input_activity::lastLocalPointer.store(nowSeconds());
-  bool button_consumed_by_controls = false;
+  bool handled = false;
+  // In free look the cursor is hidden and the overlay must not swallow clicks
+  // aimed through the crosshair.
+  const bool freeLook = free_view_active(server);
   // Feed the ImGui overlay first. When it owns the mouse, swallow the click so
   // it does not also reach game controls or a focused client.
   bool imgui_captured = false;
-  if (handle->server && handle->server->engine) {
-    Engine* engine = handle->server->engine.get();
+  if (server->engine) {
+    Engine* engine = server->engine.get();
     int slot = -1;
-    if (event->button == BTN_LEFT) {
+    if (button == BTN_LEFT) {
       slot = 0;
-    } else if (event->button == BTN_RIGHT) {
+    } else if (button == BTN_RIGHT) {
       slot = 1;
-    } else if (event->button == BTN_MIDDLE) {
+    } else if (button == BTN_MIDDLE) {
       slot = 2;
     }
     if (slot >= 0) {
-      handle->server->input.mouse_buttons[slot] =
-        static_cast<uint32_t>(event->state) ==
-        static_cast<uint32_t>(WLR_BUTTON_PRESSED);
+      server->input.mouse_buttons[slot] = pressed;
     }
-    engine->updateImGuiPointer(handle->server->pointer_x,
-                               handle->server->pointer_y,
-                               handle->server->input.mouse_buttons);
-    imgui_captured = engine->imguiWantsMouse();
+    engine->updateImGuiPointer(
+      server->pointer_x, server->pointer_y, server->input.mouse_buttons);
+    imgui_captured = engine->imguiWantsMouse() && !freeLook;
   }
+
   if (!imgui_captured) {
-    if (auto* client = remoteWindowController(handle->server)) {
-      const bool pressed = static_cast<uint32_t>(event->state) ==
-                           static_cast<uint32_t>(WLR_BUTTON_PRESSED);
+    if (auto* client = remoteWindowController(server)) {
       if (pressed) {
-        if (auto hit = remoteWindowUnderPointer(handle->server);
+        if (auto hit = remoteWindowUnderPointer(server);
             hit.has_value() &&
             client->isControllingRemoteEntity(hit->entity)) {
-          client->sendRemotePointerButton(event->button, true);
-        } else if (event->button == BTN_LEFT) {
+          client->sendRemotePointerButton(button, true);
+          handled = true;
+        } else if (button == BTN_LEFT) {
           client->releaseRemoteControl();
         }
       } else {
-        client->sendRemotePointerButton(event->button, false);
+        client->sendRemotePointerButton(button, false);
       }
-      return;
+      return handled;
     }
   }
 
-  bool wayland_focus_requested =
-    wayland_pointer_focus_requested(handle->server);
-  wlr_surface* pointer_surface = nullptr;
-  if (handle->server && handle->server->seat) {
-    pointer_surface = handle->server->seat->pointer_state.focused_surface;
-  }
-  wlr_surface* preferred_surface = nullptr;
-  Controls* controls = handle->server && handle->server->engine
-                         ? handle->server->engine->getControls()
-                         : nullptr;
-  if (static_cast<uint32_t>(event->state) ==
-        static_cast<uint32_t>(WLR_BUTTON_PRESSED) &&
-      handle->server && handle->server->engine) {
-    // If a Wayland client has (or is requesting) focus, bypass game controls so
-    // the click reaches the client immediately.
-    if (controls && !wayland_focus_requested && !imgui_captured) {
-      button_consumed_by_controls = controls->handlePointerButton(event->button, true);
+  // Free look: the crosshair at the screen centre points into the window.
+  // Deliver press, drag and release there without ever taking keyboard focus.
+  if (!imgui_captured && freeLook) {
+    if (deliver_free_view_button(server, button, pressed, time_msec)) {
+      return true;
     }
   }
-  if (handle->server->seat && !button_consumed_by_controls && !imgui_captured) {
-    if (!preferred_surface && hover_focus_enabled(handle->server)) {
-      if (auto hovered = pick_hovered_surface(handle->server)) {
-        if (handle->server->engine) {
-          if (auto wm = handle->server->engine->getWindowManager()) {
+
+  const bool wayland_focus_requested = wayland_pointer_focus_requested(server);
+  wlr_surface* pointer_surface = nullptr;
+  if (server->seat) {
+    pointer_surface = server->seat->pointer_state.focused_surface;
+  }
+  wlr_surface* preferred_surface = nullptr;
+  Controls* controls =
+    server->engine ? server->engine->getControls() : nullptr;
+  bool button_consumed_by_controls = false;
+  if (pressed && controls && !wayland_focus_requested && !imgui_captured) {
+    // If a Wayland client has (or is requesting) focus, bypass game controls so
+    // the click reaches the client immediately.
+    button_consumed_by_controls =
+      controls->handlePointerButton(button, true);
+    handled = handled || button_consumed_by_controls;
+  }
+  if (server->seat && !button_consumed_by_controls && !imgui_captured) {
+    if (!preferred_surface && hover_focus_enabled(server)) {
+      if (auto hovered = pick_hovered_surface(server)) {
+        if (server->engine) {
+          if (auto wm = server->engine->getWindowManager()) {
             wm->setCursorInputFocus(hovered->entity);
           }
         }
@@ -787,15 +964,31 @@ void handle_pointer_button(wl_listener* listener, void* data)
     }
     wlr_surface* surf = preferred_surface ? preferred_surface : pointer_surface;
     if (surf) {
-      ensure_pointer_focus(handle->server, event->time_msec, surf);
-      auto mapped = map_pointer_to_surface(handle->server, surf);
+      ensure_pointer_focus(server, time_msec, surf);
+      auto mapped = map_pointer_to_surface(server, surf);
       wlr_seat_pointer_notify_motion(
-        handle->server->seat, event->time_msec, mapped.first, mapped.second);
+        server->seat, time_msec, mapped.first, mapped.second);
       wlr_seat_pointer_notify_button(
-        handle->server->seat, event->time_msec, event->button, event->state);
-      wlr_seat_pointer_notify_frame(handle->server->seat);
+        server->seat, time_msec, button, pressed ? WL_POINTER_BUTTON_STATE_PRESSED
+                                                 : WL_POINTER_BUTTON_STATE_RELEASED);
+      wlr_seat_pointer_notify_frame(server->seat);
+      handled = true;
     }
   }
+  return handled;
+}
+
+void
+handle_pointer_button(wl_listener* listener, void* data)
+{
+  auto* handle =
+    wl_container_of(listener, static_cast<WlrPointerHandle*>(nullptr), button);
+  auto* event = static_cast<wlr_pointer_button_event*>(data);
+  inject_pointer_button(handle->server,
+                        event->button,
+                        static_cast<uint32_t>(event->state) ==
+                          static_cast<uint32_t>(WL_POINTER_BUTTON_STATE_PRESSED),
+                        event->time_msec);
 }
 
 void

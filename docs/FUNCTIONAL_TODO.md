@@ -85,6 +85,14 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**主程序自由视角十字准星与点击直通窗口**：
+  - 自由视角（光标抓取、无窗口焦点）屏幕中央绘制十字准星；光标模式与 R 锁定窗口后隐藏；
+  - 左键不再把窗口“拉到面前并锁定”，改为从屏幕中心射线命中窗口后，把 press/motion/release 直接发给该窗口；右键同样直通；未命中窗口时左键仍保留体素放置；
+  - 点击只建立临时的 pointer focus，松开后立即清除，不会捕获键盘；
+  - 仅按 `R` 才 `focusApp` 并捕获键盘/IME；新开顶层窗口不再自动获得焦点（`HACKMATRIX_DEBUG_FOCUS_NEW_WINDOW` 仍可强制，供测试）；
+  - `POINTER_REPLAY` API 改为走真实 wlroots 指针路径，便于无头测试；
+  - 实测：`weston-eventdemo` 在无焦点状态下收到左键 272 / 右键 273 press+release，坐标落在窗口中心 (576,338)；点击前后 `focus=0`、相机不变；按 R 后 `focus=1` 并收到键盘焦点。
+
 - 2026-11-24：**专用服务器单人预共享窗口**：
   - 问题：旧逻辑要求先收到 peer 的 scene fingerprint 才允许勾选 Share，连专用服务器且只有一人时一直显示 “Waiting for peer scene info...”，无法共享；
   - 新增 `Client::canShareWindows()`：本地场景就绪且无 mismatch 时，若已有 peer fingerprint **或** 当前 authority 是 `kServerAuthorityID` 即允许共享；

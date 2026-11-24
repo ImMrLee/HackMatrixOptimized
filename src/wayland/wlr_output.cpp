@@ -323,6 +323,10 @@ handle_output_frame(wl_listener* listener, void* data)
       });
       // KEY_REPLAY / remote control typing: map a keysym back to a keycode on
       // the active keymap and deliver it through the seat (and IME grab).
+      server->engine->setPointerInjector(
+        [server](std::uint32_t button, bool pressed) {
+          return inject_pointer_button(server, button, pressed);
+        });
       server->engine->setKeyInjector(
         [server](std::uint32_t sym, bool pressed) {
           if (server->seat == nullptr) {

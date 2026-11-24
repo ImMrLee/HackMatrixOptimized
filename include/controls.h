@@ -157,6 +157,9 @@ public:
   void clearMovementInput();
   void applyLookDelta(double dx, double dy);
   bool handlePointerButton(uint32_t button, bool pressed);
+  // True in first-person/free-look mode: the cursor is hidden and the
+  // crosshair at the screen centre aims at windows and the world.
+  bool isCursorGrabbed() const { return grabbedCursor; }
   void disableKeys();
   void enableKeys();
   void triggerScreenshot();

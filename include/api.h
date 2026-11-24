@@ -106,6 +106,9 @@ class Api
   std::function<std::shared_ptr<MultiPlayer::Client>()> clientProvider_;
   // Optional sink used by KEY_REPLAY to type into the focused Wayland client.
   std::function<void(std::uint32_t, bool)> keyInjector_;
+  // POINTER_REPLAY should exercise the real wlroots button path (crosshair
+  // click-through, focus, control routing), not just Controls.
+  std::function<bool(std::uint32_t, bool)> pointerInjector_;
 
   zmq::context_t context;
   CommandServer* commandServer;
@@ -180,6 +183,10 @@ public:
   void setKeyInjector(std::function<void(std::uint32_t, bool)> injector)
   {
     keyInjector_ = std::move(injector);
+  }
+  void setPointerInjector(std::function<bool(std::uint32_t, bool)> injector)
+  {
+    pointerInjector_ = std::move(injector);
   }
   ~Api();
   void poll();

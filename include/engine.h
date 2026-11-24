@@ -77,6 +77,7 @@ class Engine
   // Drawn inside EngineGui's active ImGui frame (IME candidate window, ...).
   std::function<void()> imguiOverlay_;
   std::function<void(std::uint32_t, bool)> keyInjector_;
+  std::function<bool(std::uint32_t, bool)> pointerInjector_;
 
 public:
   Engine(char** envp, EngineOptions options = {});
@@ -111,6 +112,10 @@ public:
   void setKeyInjector(std::function<void(std::uint32_t, bool)> injector)
   {
     keyInjector_ = std::move(injector);
+  }
+  void setPointerInjector(std::function<bool(std::uint32_t, bool)> injector)
+  {
+    pointerInjector_ = std::move(injector);
   }
   void renderImguiOverlays()
   {

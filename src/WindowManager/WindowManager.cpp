@@ -767,11 +767,12 @@ entt::entity WindowManager::registerWaylandApp(std::shared_ptr<WaylandApp> app,
             pos.z);
   assignHotkeySlot(entity);
 
-  // Make the first window usable immediately (and give IME clients a focused
-  // text input). HACKMATRIX_DEBUG_FOCUS_NEW_WINDOW forces this for tests.
+  // Only the explicit focus key (R, handled by Controls) or an explicit debug
+  // hook locks a window and captures the keyboard. New top-level windows stay
+  // in free look so the crosshair can click them without stealing input.
   static const bool debugFocusNew =
     std::getenv("HACKMATRIX_DEBUG_FOCUS_NEW_WINDOW") != nullptr;
-  if (debugFocusNew || !getCurrentlyFocusedApp().has_value()) {
+  if (debugFocusNew) {
     unfocusApp();
     focusApp(entity);
   }

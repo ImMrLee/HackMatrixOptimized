@@ -615,7 +615,7 @@ Api::handleQuit(const BatchedRequest&)
 void
 Api::handlePointerReplay(const BatchedRequest& batchedRequest)
 {
-  if (!controls) {
+  if (!controls && !pointerInjector_) {
     return;
   }
   const auto& replay = batchedRequest.request.pointerreplay();
@@ -623,7 +623,12 @@ Api::handlePointerReplay(const BatchedRequest& batchedRequest)
   for (const auto& e : replay.entries()) {
     cumulative += e.delay_ms();
     // Deliver immediately; delay handling could be extended later if needed.
-    bool handled = controls->handlePointerButton(e.button(), e.pressed());
+    bool handled = false;
+    if (pointerInjector_) {
+      handled = pointerInjector_(e.button(), e.pressed());
+    } else if (controls) {
+      handled = controls->handlePointerButton(e.button(), e.pressed());
+    }
     {
       char buf[160];
       snprintf(buf,
