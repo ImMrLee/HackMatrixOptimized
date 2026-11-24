@@ -515,6 +515,9 @@ Controls::handleToggleCursor()
       resetMouse = true;
       if (wm) {
         wm->setCursorVisible(false);
+        // Drop any hover-only focus from cursor mode so the crosshair controls
+        // input immediately and the window does not keep keyboard focus.
+        wm->clearCursorInputFocus();
       }
       log_controls("controls: toggle_cursor=1\n");
     }

@@ -404,7 +404,7 @@ handle_output_frame(wl_listener* listener, void* data)
       // between press and release. The cursor-mode cleanup below would
       // otherwise clear it every frame and clients would never see a click.
       const bool freeViewPointerActive =
-        server->free_view_pointer_entity != entt::null ||
+        free_view_pointer_active(server) ||
         !server->free_view_buttons.empty();
       if (cursorOverrideSet && cursorOverrideVisible) {
         sync_cursor_mode_pointer_focus(server);

@@ -85,6 +85,12 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**修复准星悬停窗口时系统光标出现、自由视角旋转失效**：
+  - 根因：准星 hover/click 设置 seat pointer focus 后，`wayland_pointer_focus_requested()` 把该 focus 当成“需要光标”，导致 `wlr_output` 每帧把系统光标显示出来，并跳过 `applyLookDelta`；
+  - 修复：自由视角下 `wayland_pointer_focus_requested()` 返回 false；`handle_request_set_cursor` 在准星 focus 期间忽略客户端 cursor image；pointer focus 仍保留以完成 hover/click；
+  - 从光标模式按 F 回到自由视角时顺带清理 `cursorInputFocusedApp`，避免旧的 hover focus 让窗口继续吃键盘；
+  - 单测 86/86 通过。
+
 - 2026-11-24：**自由视角点击修复（press/release 跨帧丢失）**：
   - 根因：`wlr_output` 每帧的 cursor-mode 清理会在准星点击的 press 与 release 之间清掉 pointer focus，客户端只收到按下、收不到松开，于是按钮高亮但不触发；键盘/滚轮也可能继续落到旧窗口；
   - 修复：自由视角准星持有 pointer focus 时跳过错帧清理；准星 hover 保持 focus 并按射线更新/清除；release 必定发到按下的表面；

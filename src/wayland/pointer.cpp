@@ -487,6 +487,16 @@ free_view_active(WlrServer* server)
   return !wm->hasCurrentOrPendingFocus();
 }
 
+bool
+free_view_pointer_active(const WlrServer* server)
+{
+  if (!server) {
+    return false;
+  }
+  return server->free_view_pointer_entity != entt::null ||
+         !server->free_view_buttons.empty();
+}
+
 static bool
 free_view_aim_hit(WlrServer* server, WindowManager::AppRayHit& hit)
 {
@@ -860,6 +870,11 @@ bool
 wayland_pointer_focus_requested(WlrServer* server)
 {
   if (!server || !server->engine) {
+    return false;
+  }
+  // Free look keeps pointer focus only for crosshair clicks; it must not turn
+  // the system cursor back on or disable camera look.
+  if (free_view_active(server)) {
     return false;
   }
   if (server->seat) {
@@ -1385,6 +1400,14 @@ handle_request_set_cursor(wl_listener* listener, void* data)
     listener, static_cast<WlrServer*>(nullptr), request_set_cursor);
   auto* event = static_cast<wlr_seat_pointer_request_set_cursor_event*>(data);
   if (!server || !server->cursor || !server->seat) {
+    return;
+  }
+  if (free_view_pointer_active(server) && free_view_active(server)) {
+    // Free-look crosshair focus is pointer-only; never show a client cursor
+    // image or switch out of camera look.
+    wlr_cursor_set_surface(server->cursor, nullptr, 0, 0);
+    wlr_cursor_unset_image(server->cursor);
+    server->cursor_visible = false;
     return;
   }
   if (wayland_pointer_locked(server)) {

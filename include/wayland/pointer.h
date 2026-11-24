@@ -24,6 +24,11 @@ void update_pointer_constraint(WlrServer* server, wlr_surface* focused_surface);
 void sync_cursor_mode_pointer_focus(WlrServer* server);
 void clear_cursor_mode_input_focus(WlrServer* server);
 
+// True while the free-look crosshair owns a pointer-only focus. Used to keep
+// the system cursor hidden and camera look active even though a client surface
+// has pointer focus.
+bool free_view_pointer_active(const WlrServer* server);
+
 // wlr_cursor positions are in output-layout coordinates. Renderer and client
 // surface coordinates are local to one output.
 std::pair<double, double> output_local_pointer(WlrServer* server,
