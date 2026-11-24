@@ -664,6 +664,11 @@ deactivate_free_view_owner(WlrServer* server)
       server->free_view_active_entity == entt::null ||
       !server->registry->valid(server->free_view_active_entity)) {
     server->free_view_active_entity = entt::null;
+    if (server->engine) {
+      if (auto wm = server->engine->getWindowManager()) {
+        wm->setPopupOwner(entt::null);
+      }
+    }
     return;
   }
   if (auto* component = server->registry->try_get<WaylandApp::Component>(
@@ -674,6 +679,11 @@ deactivate_free_view_owner(WlrServer* server)
     }
   }
   server->free_view_active_entity = entt::null;
+  if (server->engine) {
+    if (auto wm = server->engine->getWindowManager()) {
+      wm->setPopupOwner(entt::null);
+    }
+  }
 }
 
 static void
@@ -688,6 +698,11 @@ activate_free_view_owner(WlrServer* server, entt::entity entity)
   }
   deactivate_free_view_owner(server);
   server->free_view_active_entity = owner;
+  if (server->engine) {
+    if (auto wm = server->engine->getWindowManager()) {
+      wm->setPopupOwner(owner);
+    }
+  }
   if (owner == entt::null || !server->registry->valid(owner)) {
     return;
   }
@@ -763,6 +778,11 @@ leave_free_view_input(WlrServer* server)
     deactivate_free_view_owner(server);
   } else {
     server->free_view_active_entity = entt::null;
+  }
+  if (server->engine) {
+    if (auto wm = server->engine->getWindowManager()) {
+      wm->setPopupOwner(entt::null);
+    }
   }
 }
 

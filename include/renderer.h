@@ -98,7 +98,10 @@ class Renderer
   void renderDynamicObjects();
   void renderModels(RenderPerspective);
   void renderVoxels();
-  void renderPopup(WaylandApp::Component& popup, WaylandApp::Component& parent);
+  void renderPopup(WaylandApp::Component& popup,
+                   WaylandApp::Component& parent,
+                   int offsetX,
+                   int offsetY);
   std::shared_ptr<spdlog::logger> logger;
   void genMeshResources();
 

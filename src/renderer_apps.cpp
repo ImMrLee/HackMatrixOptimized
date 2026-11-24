@@ -94,7 +94,10 @@ Renderer::drawAppDirect(AppSurface* app, Bootable* bootable)
     }
 }
 
-void Renderer::renderPopup(WaylandApp::Component& popup, WaylandApp::Component& parent) {
+void Renderer::renderPopup(WaylandApp::Component& popup,
+                           WaylandApp::Component& parent,
+                           int offsetX,
+                           int offsetY) {
     auto* popupApp = popup.app.get();
     auto* parentApp = parent.app.get();
     if (!popupApp || !parentApp) {
@@ -109,9 +112,9 @@ void Renderer::renderPopup(WaylandApp::Component& popup, WaylandApp::Component& 
     }
     float parentLeft = std::max(0.0f, (SCREEN_WIDTH - parentW) * 0.5f);
     float parentTop = std::max(0.0f, (SCREEN_HEIGHT - parentH) * 0.5f);
-    int destX = static_cast<int>(parentLeft + popup.offset_x);
+    int destX = static_cast<int>(parentLeft + offsetX);
     // Keep popups positioned in the same top-origin space as their parent.
-    int destY = static_cast<int>(parentTop + popup.offset_y);
+    int destY = static_cast<int>(parentTop + offsetY);
 
     if (popupApp->needsTextureImport()) {
       popupApp->appTexture();
@@ -141,6 +144,41 @@ void Renderer::renderPopup(WaylandApp::Component& popup, WaylandApp::Component& 
                       GL_NEAREST);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
 }
+
+namespace {
+
+// Walk a popup chain up to the top-level window. Offsets accumulate because
+// nested xdg popups are positioned relative to their parent popup.
+bool
+resolvePopupOwner(EntityRegistry& registry,
+                  const WaylandApp::Component& popup,
+                  entt::entity& owner,
+                  int& offsetX,
+                  int& offsetY)
+{
+  offsetX = popup.offset_x;
+  offsetY = popup.offset_y;
+  entt::entity parent = popup.parent;
+  for (int depth = 0; depth < 16; ++depth) {
+    if (parent == entt::null || !registry.valid(parent)) {
+      return false;
+    }
+    auto* component = registry.try_get<WaylandApp::Component>(parent);
+    if (!component) {
+      return false;
+    }
+    if (!component->accessory) {
+      owner = parent;
+      return true;
+    }
+    offsetX += component->offset_x;
+    offsetY += component->offset_y;
+    parent = component->parent;
+  }
+  return false;
+}
+
+} // namespace
 
 void
 Renderer::renderApps()
@@ -308,28 +346,31 @@ Renderer::renderApps()
       }
       renderLayerShell(comp);
     }
-    if (focusedEnt != entt::null) {
-      auto accessories =
-        registry->view<WaylandApp::Component>(entt::exclude<Positionable>);
-      for (auto [ent, comp] : accessories.each()) {
-        if (!comp.accessory) {
-          continue;
-        }
-        if (comp.layer_shell) {
-          continue;
-        }
-        if (comp.parent == entt::null || comp.parent != focusedEnt) {
-          continue;
-        }
-        if (!registry->valid(comp.parent)) {
-          continue;
-        }
-        auto* parentComp = registry->try_get<WaylandApp::Component>(comp.parent);
-        if (!parentComp || !parentComp->app) {
-          continue;
-        }
-        renderPopup(comp, *parentComp);
+    const entt::entity popupOwner =
+      wm ? wm->getPopupOwner() : entt::null;
+    auto accessories =
+      registry->view<WaylandApp::Component>(entt::exclude<Positionable>);
+    for (auto [ent, comp] : accessories.each()) {
+      if (!comp.accessory || comp.layer_shell) {
+        continue;
       }
+      entt::entity owner = entt::null;
+      int offsetX = 0;
+      int offsetY = 0;
+      if (!resolvePopupOwner(*registry, comp, owner, offsetX, offsetY)) {
+        continue;
+      }
+      if (owner != focusedEnt && owner != popupOwner) {
+        continue;
+      }
+      if (!registry->valid(owner)) {
+        continue;
+      }
+      auto* parentComp = registry->try_get<WaylandApp::Component>(owner);
+      if (!parentComp || !parentComp->app) {
+        continue;
+      }
+      renderPopup(comp, *parentComp, offsetX, offsetY);
     }
   }
 

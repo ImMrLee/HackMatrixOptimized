@@ -85,6 +85,12 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**自由视角下二级菜单/弹窗不显示**：
+  - 根因：`Renderer::renderApps()` 只绘制 parent 等于 `getCurrentlyFocusedApp()` 的 accessory surface；自由视角没有 WM focus，所以 popup 被跳过，按 R 聚焦后才出现；
+  - 修复：`WindowManager` 增加 `popupOwner`，由准星 hover/点击的窗口设置；renderer 在 `focusedEnt` 或 `popupOwner` 下绘制 accessory；
+  - 同时沿 popup parent 链解析到顶层窗口并累加 offset，二级/三级 xdg popup 也能正确定位；
+  - 实测：自由视角（`focus=0`）右键 Dolphin 后 362x395 的上下文菜单正常显示；不再需要先按 R。
+
 - 2026-11-24：**修复准星悬停窗口时系统光标出现、自由视角旋转失效**：
   - 根因：准星 hover/click 设置 seat pointer focus 后，`wayland_pointer_focus_requested()` 把该 focus 当成“需要光标”，导致 `wlr_output` 每帧把系统光标显示出来，并跳过 `applyLookDelta`；
   - 修复：自由视角下 `wayland_pointer_focus_requested()` 返回 false；`handle_request_set_cursor` 在准星 focus 期间忽略客户端 cursor image；pointer focus 仍保留以完成 hover/click；

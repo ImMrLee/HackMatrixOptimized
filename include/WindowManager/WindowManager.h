@@ -95,6 +95,9 @@ class WindowManager
   std::optional<bool> cursorVisible;
   std::optional<entt::entity> pendingFocusedApp;
   std::optional<entt::entity> cursorInputFocusedApp;
+  // Window whose popups/menus should render while free look is aiming at it
+  // (there is no keyboard focus in free look).
+  entt::entity popupOwner = entt::null;
   std::array<std::optional<entt::entity>, kHotkeySlotCount> appsWithHotKeys{};
 
 public:
@@ -140,6 +143,8 @@ public:
                                   int screenW = 0,
                                   int screenH = 0);
   std::optional<bool> getCursorVisibleOverride() const { return cursorVisible; }
+  void setPopupOwner(entt::entity entity) { popupOwner = entity; }
+  entt::entity getPopupOwner() const { return popupOwner; }
   void setCursorInputFocus(entt::entity appEntity);
   void clearCursorInputFocus();
   optional<entt::entity> getCursorInputFocusedApp();
