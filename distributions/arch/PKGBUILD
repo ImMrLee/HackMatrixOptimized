@@ -1,5 +1,10 @@
 # Maintainer: flumpsi <flumpsi@outlook.com>
 
+# Dependency note: Arch [extra] now ships wlroots0.20, but HackMatrix uses the
+# wlroots 0.19 ABI. Install the AUR package before building:
+#   yay -S wlroots0.19      # or: paru -S wlroots0.19
+# Plain `makepkg -si` cannot resolve AUR dependencies on its own.
+
 # NOTE! This package is compiled without a -j flag, since some users might prefer to set it on their own.
 # If you would like to set the -j flag, please edit the PKGBUILD or use MAKEFLAGS e.g: MAKEFLAGS="-j$(nproc)"
 pkgname=hackmatrix-git
@@ -31,6 +36,8 @@ depends=(
   'gst-plugins-bad'
   'gst-libav'
   'libnice'
+  # Arch [extra] now ships wlroots0.20, so 0.19 lives in the AUR.
+  # Install it before building: yay -S wlroots0.19   (makepkg cannot fetch AUR deps)
   'wlroots0.19'
   'libxcb'
   'pixman'

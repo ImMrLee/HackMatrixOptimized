@@ -32,13 +32,18 @@ Window sharing uses GStreamer `webrtcbin`: `gst-plugins-bad` provides
 
 - **Preferred:** the system package (`wlroots-0.19`, Arch calls it `wlroots0.19`).
   Its `pkg-config` file is detected automatically.
+  Arch's `[extra]` now ships `wlroots0.20`; `wlroots0.19` is AUR-only. Install
+  it with `yay -S wlroots0.19` (or `paru -S wlroots0.19`) before building the
+  Arch package. `makepkg` cannot resolve AUR dependencies by itself.
 - **Fallback:** the bundled `wlroots/` submodule is built with meson/ninja when
   no system package is present. This needs `meson` and `ninja`. The submodule is
   pinned to the same 0.19.x version as the distribution packages so that the
   private headers it provides match the library that gets linked. CMake warns
   when the versions differ (and fails with `MATRIX_STRICT_WLROOTS_VERSION=ON`),
   because the compositor reads private struct fields whose offsets are not ABI
-  stable.
+  stable. Note that this fallback applies to direct `cmake` builds; the
+  `distributions/arch/PKGBUILD` still declares `wlroots0.19` so the packaged
+  binary has a matching runtime library.
 
 Crow (used by the optional multiplayer web GUI) is discovered with
 `find_package`. It is never downloaded implicitly.
