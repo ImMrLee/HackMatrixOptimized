@@ -1,19 +1,18 @@
-# Building HackMatrix
+# 构建 HackMatrix
 
-## Quick start
+## 快速开始
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-./build/matrix            # or ./launch for the full session setup
+./build/matrix            # 完整会话环境也可运行 ./launch
 ```
 
-Configuration takes well under a second and a full build takes about a minute
-on a modern machine once dependencies are installed.
+依赖安装完成后，在普通现代机器上，配置通常不到一秒即可完成；完整构建约需一分钟。
 
-## Dependencies
+## 依赖
 
-Everything is found through `pkg-config` and CMake. On Arch:
+所有依赖都通过 `pkg-config` 和 CMake 查找。在 Arch Linux 上可以运行：
 
 ```bash
 sudo pacman -S --needed base-devel cmake git protobuf wayland wayland-protocols \
@@ -24,130 +23,113 @@ sudo pacman -S --needed base-devel cmake git protobuf wayland wayland-protocols 
   libnice gtest
 ```
 
-Window sharing uses GStreamer `webrtcbin`: `gst-plugins-bad` provides
-`webrtcbin`/`h264parse`, `gst-plugins-good` provides `rtpbin`/`rtph264pay`,
-`gst-libav` provides `avdec_h264`, and `libnice` provides ICE.
+窗口共享使用 GStreamer 的 `webrtcbin`：
 
-`wlroots` is the one dependency that differs by distribution:
+- `gst-plugins-bad` 提供 `webrtcbin` 和 `h264parse`
+- `gst-plugins-good` 提供 `rtpbin` 和 `rtph264pay`
+- `gst-libav` 提供 `avdec_h264`
+- `libnice` 提供 ICE 支持
 
-- **Preferred:** the system package (`wlroots-0.19`, Arch calls it `wlroots0.19`).
-  Its `pkg-config` file is detected automatically.
-  Arch's `[extra]` now ships `wlroots0.20`; `wlroots0.19` is AUR-only. Install
-  it with `yay -S wlroots0.19` (or `paru -S wlroots0.19`) before building the
-  Arch package. `makepkg` cannot resolve AUR dependencies by itself.
-- **Fallback:** the bundled `wlroots/` submodule is built with meson/ninja when
-  no system package is present. This needs `meson` and `ninja`. The submodule is
-  pinned to the same 0.19.x version as the distribution packages so that the
-  private headers it provides match the library that gets linked. CMake warns
-  when the versions differ (and fails with `MATRIX_STRICT_WLROOTS_VERSION=ON`),
-  because the compositor reads private struct fields whose offsets are not ABI
-  stable. Note that this fallback applies to direct `cmake` builds; the
-  `distributions/arch/PKGBUILD` still declares `wlroots0.19` so the packaged
-  binary has a matching runtime library.
+不同发行版之间最主要的差异是 `wlroots`：
 
-Crow (used by the optional multiplayer web GUI) is discovered with
-`find_package`. It is never downloaded implicitly.
+- **首选：**系统软件包（`wlroots-0.19`；Arch Linux 软件包名为 `wlroots0.19`）。CMake 会自动检测其 `pkg-config` 文件。
+  - Arch 官方仓库的 `[extra]` 现在提供 `wlroots0.20`，而 `wlroots0.19` 只能通过 AUR 安装。构建 Arch 软件包前，请使用 `yay -S wlroots0.19` 或 `paru -S wlroots0.19` 安装。
+  - `makepkg` 本身无法解析 AUR 依赖。
+- **后备方案：**没有系统软件包时，CMake 会使用 Meson/Ninja 构建仓库自带的 `wlroots/` 子模块。此方案需要安装 `meson` 和 `ninja`。
+  - 子模块固定在与发行版软件包相同的 0.19.x 系列，以确保私有头文件和实际链接的库一致。
+  - 当版本不一致时，CMake 会发出警告；设置 `MATRIX_STRICT_WLROOTS_VERSION=ON` 后会直接失败。项目会读取私有结构体字段，而这些字段偏移不保证跨 ABI 稳定。
+  - 此后备方案适用于直接使用 CMake 构建；`distributions/arch/PKGBUILD`仍要求 `wlroots0.19`，以确保打包后的可执行文件使用同版本运行库。
 
-## Options
+Crow（可选的多人 Web GUI 使用）通过 `find_package` 查找，项目不会隐式下载它。
 
-| Option | Default | Purpose |
+## 构建选项
+
+| 选项 | 默认值 | 用途 |
 |---|---|---|
-| `MATRIX_USE_SYSTEM_WLROOTS` | `ON` | Use the system wlroots when available; `OFF` forces the submodule build |
-| `MATRIX_STRICT_WLROOTS_VERSION` | `OFF` | Fail (instead of warn) when the system wlroots version differs from the submodule |
-| `MATRIX_BUILD_TESTS` | `ON` | Build the gtest suites |
-| `MATRIX_ENABLE_INTEGRATION_TESTS` | `OFF` | Register compositor-spawning tests with CTest |
-| `MATRIX_WARNINGS` | `ON` | Add `-Wall -Wextra` to project targets |
-| `MATRIX_NATIVE_ARCH` | `OFF` | Add `-march=native` (not portable across CPUs) |
-| `MATRIX_SANITIZE` | *(empty)* | Comma-separated sanitizers, e.g. `address,undefined` |
-| `MATRIX_ENABLE_WEBGUI` | `ON` | Build the multiplayer web GUI (requires Crow) |
-| `MATRIX_FETCH_CROW` | `OFF` | Allow downloading Crow when no system package is found |
-| `MATRIX_CROW_SOURCE_DIR` | *(empty)* | Use a local Crow checkout instead of downloading |
+| `MATRIX_USE_SYSTEM_WLROOTS` | `ON` | 系统中存在 wlroots 时优先使用；设为 `OFF` 时强制构建子模块 |
+| `MATRIX_STRICT_WLROOTS_VERSION` | `OFF` | 系统 wlroots 与子模块版本不一致时失败，而不是只发出警告 |
+| `MATRIX_BUILD_TESTS` | `ON` | 构建 GTest 测试套件 |
+| `MATRIX_ENABLE_INTEGRATION_TESTS` | `OFF` | 向 CTest 注册需要启动合成器的集成测试 |
+| `MATRIX_WARNINGS` | `ON` | 为项目目标添加 `-Wall -Wextra` |
+| `MATRIX_NATIVE_ARCH` | `OFF` | 添加 `-march=native`（不能跨 CPU 架构通用） |
+| `MATRIX_SANITIZE` | （空） | 逗号分隔的 Sanitizer，例如 `address,undefined` |
+| `MATRIX_ENABLE_WEBGUI` | `ON` | 构建多人 Web GUI（需要 Crow） |
+| `MATRIX_FETCH_CROW` | `OFF` | 找不到系统软件包时允许下载 Crow |
+| `MATRIX_CROW_SOURCE_DIR` | （空） | 使用本地 Crow 检出目录，而不下载 |
 
-`CMAKE_BUILD_TYPE=Debug` now really means `-O0` (previously the hardcoded `-O3`
-made Debug builds indistinguishable from Release). Release keeps the previous
-behaviour: `-O3 -g` plus CMake's `-DNDEBUG` from `CMAKE_CXX_FLAGS_RELEASE`.
+现在的 `CMAKE_BUILD_TYPE=Debug` 确实会使用 `-O0`；此前硬编码的 `-O3` 会导致 Debug 与 Release 实际上没有区别。Release 保持原有行为，即 `-O3 -g`，并加上 CMake 在 `CMAKE_CXX_FLAGS_RELEASE` 中生成的 `-DNDEBUG`。
 
-## Sanitizers
+## Sanitizer
 
 ```bash
 cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
   -DMATRIX_SANITIZE=address,undefined
 cmake --build build-asan -j"$(nproc)"
-ctest --test-dir build-asan --output-on-failure   # CTest sets the needed env
+ctest --test-dir build-asan --output-on-failure   # CTest 会设置所需环境变量
 ```
 
-Two toolchain limitations are handled automatically:
+当前构建系统自动处理两项工具链限制：
 
-1. **protobuf-generated code is not instrumented.** With ASan enabled on the
-   generated `api.pb.cc`, virtual calls from `libprotobuf` jump to a bogus
-   address (reproduced with both GCC 16 and Clang). CMake adds
-   `-fno-sanitize=…` to that single translation unit; the rest of the code is
-   fully instrumented.
-2. **container-overflow detection is disabled for tests.** The system
-   `libprotobuf` is not instrumented, so it writes into `std::string` capacity
-   that ASan has annotated as poisoned, producing false positives. CTest sets
-   `ASAN_OPTIONS=detect_container_overflow=0`.
+1. **不对 protobuf 生成代码进行检测。**若对生成的 `api.pb.cc` 启用 ASan，来自 `libprotobuf` 的虚函数调用会跳转到无效地址（GCC 16 与 Clang 均已复现）。CMake 会只为该翻译单元添加 `-fno-sanitize=…`，其余代码仍完整使用 Sanitizer。
+2. **测试中关闭容器溢出检测。**系统中的 `libprotobuf` 未使用 Sanitizer 编译，因此可能向 ASan 标记为中毒的 `std::string` 容量写入数据，从而产生误报。CTest 会设置 `ASAN_OPTIONS=detect_container_overflow=0`。
 
-When running the binaries manually, pass the same options:
+手动运行二进制时应传入相同选项：
 
 ```bash
 ASAN_OPTIONS=detect_container_overflow=0 ./build-asan/matrix_unit_tests
 ```
 
-## Tests
+## 测试
 
 ```bash
-# Unit tests (default CTest set)
+# 单元测试（默认 CTest 测试集）
 ctest --test-dir build --output-on-failure
 
-# Integration tests need a live Wayland/DRM session and `foot`
+# 集成测试需要真实的 Wayland/DRM 会话以及 foot
 cmake -S . -B build -DMATRIX_ENABLE_INTEGRATION_TESTS=ON
 ctest --test-dir build --output-on-failure -L integration
 ```
 
-See `tests/TESTING.md` for the harness details.
+测试框架的详细信息请参阅 `tests/TESTING.md`。
 
-## Debug overlay (ImGui)
+## 调试覆盖层（ImGui）
 
-The compositor draws a HashMatrix debug window with FPS, a debug log, an entity
-editor and multiplayer controls. It is enabled by default.
+合成器会绘制一个名为 HackMatrix 的调试窗口，其中包含 FPS、调试日志、实体编辑器和多人游戏控件。该覆盖层默认启用。
 
-| Variable | Effect |
+| 环境变量 | 作用 |
 |---|---|
-| `HACKMATRIX_ENABLE_GUI=0` | Disable the overlay (e.g. for benchmarking or CI) |
-| `HACKMATRIX_IMGUI_FLIP=0` | Do not mirror the overlay vertically (default: mirrored for the wlroots FBO) |
-| `HACKMATRIX_SCREENSHOT_FRAME=N` | Write `screenshots/<time>.png` on frame N (headless verification) |
-| `HACKMATRIX_SCREENSHOT_AFTER_MS=N` | Write a screenshot N ms after the first frame (useful when a client connects later) |
-| `HACKMATRIX_IMGUI_MULTIPLAYER_TAB=1` | Force the Multiplayer tab to be selected (UI screenshots/tests) |
-| `HACKMATRIX_DEBUG_MULTIPLAYER_CONNECT=host:port` | Auto-connect the Multiplayer panel once (headless UI tests) |
-| `HACKMATRIX_DEBUG_FOCUS_NEW_WINDOW=1` | Lock each new top-level window/input (default: only `R` locks a window) |
-| `HACKMATRIX_DEBUG_PREVIEW_FIRST_WINDOW=1` | Create a local loopback preview of the first window (headless UI tests) |
-| `HACKMATRIX_DEBUG_SHARE_FIRST_WINDOW=1` | Publish the first window once the scene is usable (matching peer or dedicated server, headless tests) |
-| `HACKMATRIX_DEBUG_ALLOW_CONTROL_FIRST_WINDOW=1` | Also allow control for the auto-shared window (headless tests) |
-| `HACKMATRIX_DEBUG_TAKE_CONTROL_FIRST_REMOTE=1` | Request control of the first available remote window (headless tests) |
-| `HACKMATRIX_DEBUG_SEND_KEY_AFTER_CONTROL=1` | Send one `KEY_A` after control is granted (headless tests) |
+| `HACKMATRIX_ENABLE_GUI=0` | 禁用覆盖层（例如用于基准测试或 CI） |
+| `HACKMATRIX_IMGUI_FLIP=0` | 不垂直镜像覆盖层（默认会为 wlroots FBO 镜像） |
+| `HACKMATRIX_SCREENSHOT_FRAME=N` | 在第 N 帧将截图写入 `screenshots/<time>.png`（无头验证） |
+| `HACKMATRIX_SCREENSHOT_AFTER_MS=N` | 首帧后等待 N 毫秒再截图（客户端稍后连接时很有用） |
+| `HACKMATRIX_IMGUI_MULTIPLAYER_TAB=1` | 强制选中多人游戏标签页（UI 截图/测试） |
+| `HACKMATRIX_DEBUG_MULTIPLAYER_CONNECT=host:port` | 自动连接多人面板一次（无头 UI 测试） |
+| `HACKMATRIX_DEBUG_FOCUS_NEW_WINDOW=1` | 锁定每个新顶层窗口及其输入（默认只有按 `R` 才锁定窗口） |
+| `HACKMATRIX_DEBUG_PREVIEW_FIRST_WINDOW=1` | 为第一个窗口创建本地回环预览（无头 UI 测试） |
+| `HACKMATRIX_DEBUG_SHARE_FIRST_WINDOW=1` | 场景可用后发布第一个窗口（用于匹配的对等端或专用服务器，无头测试） |
+| `HACKMATRIX_DEBUG_ALLOW_CONTROL_FIRST_WINDOW=1` | 同时允许控制自动共享的窗口（无头测试） |
+| `HACKMATRIX_DEBUG_TAKE_CONTROL_FIRST_REMOTE=1` | 请求控制第一个可用的远程窗口（无头测试） |
+| `HACKMATRIX_DEBUG_SEND_KEY_AFTER_CONTROL=1` | 获得控制权后发送一次 `KEY_A`（无头测试） |
 
-The overlay is rendered into the same GL context and framebuffer as the scene,
-from the wlroots output render callback. Mouse input is forwarded from the
-Wayland pointer handlers; when the overlay wants the mouse, clicks are consumed
-so they do not also reach game controls or clients. Keyboard text input is not
-forwarded to ImGui yet, so text fields are read-only for now.
+覆盖层会与场景共用同一个 GL 上下文和帧缓冲，并从 wlroots 输出渲染回调中绘制。鼠标输入通过 Wayland 指针处理器转发；当覆盖层需要鼠标时，点击会被消耗，不会继续传递给游戏控制或客户端。键盘文本输入暂未转发给 ImGui，因此文本框目前只读。
 
-## Chinese input (fcitx5)
+## 中文输入（fcitx5）
 
-HackMatrix advertises `zwp_text_input_manager_v3`,
-`zwp_input_method_manager_v2`, and `zwp_virtual_keyboard_manager_v1`, so fcitx5
-can type into native Wayland clients.
+HackMatrix 宣告支持以下协议：
 
-1. If fcitx5 already runs on the host, start HackMatrix in a private D-Bus
-   session (a second fcitx5 instance on the same bus exits immediately):
+- `zwp_text_input_manager_v3`
+- `zwp_input_method_manager_v2`
+- `zwp_virtual_keyboard_manager_v1`
+
+因此 fcitx5 可以向原生 Wayland 客户端输入文字。
+
+1. 如果 fcitx5 已在宿主机运行，应在私有 D-Bus 会话中启动 HackMatrix；在同一 D-Bus 上启动第二个 fcitx5 实例会立即退出：
 
    ```bash
    dbus-run-session -- ./launch --headless
    ```
 
-2. Inside that session, start and activate fcitx5 (e.g. from a HackMatrix
-   terminal):
+2. 在该会话中启动并激活 fcitx5，例如从 HackMatrix 终端运行：
 
    ```bash
    fcitx5 -d
@@ -155,40 +137,32 @@ can type into native Wayland clients.
    fcitx5-remote -s pinyin
    ```
 
-3. Client environment:
-   - GTK3/GTK4 on Wayland: no extra variable (uses text-input-v3). If the host
-     sets `GTK_IM_MODULE=fcitx`, either keep it (needs `fcitx5-gtk`) or set
-     `GTK_IM_MODULE=wayland`.
-   - Qt 6: `QT_IM_MODULE=wayland` (text-input-v3) or `QT_IM_MODULE=fcitx`.
-   - XWayland apps: `XMODIFIERS=@im=fcitx` (fcitx5's XIM addon).
+3. 客户端环境：
+   - GTK3/GTK4 Wayland：无需额外变量（使用 text-input-v3）。如果宿主机设置了 `GTK_IM_MODULE=fcitx`，可以保留该变量（需要 `fcitx5-gtk`），也可以改为 `GTK_IM_MODULE=wayland`。
+   - Qt 6：使用 `QT_IM_MODULE=wayland`（text-input-v3）或 `QT_IM_MODULE=fcitx`。
+   - XWayland 应用：使用 `XMODIFIERS=@im=fcitx`（fcitx5 的 XIM 附加组件）。
 
-The candidate window is drawn by the ImGui overlay near the pointer. ImGui
-panels themselves are not Wayland text-input clients, so Entity Editor /
-Multiplayer text fields remain ASCII-only.
+候选词窗口由 ImGui 覆盖层绘制在指针附近。ImGui 面板本身不是 Wayland 文本输入客户端，因此实体编辑器和多人游戏中的文本字段仍只允许 ASCII 字符。
 
-Notes:
-- Only clients implementing `zwp_text_input_v3` receive IME text.
-- `KEY_REPLAY` now also injects keys into the focused client (ASCII keysyms via
-  the seat keymap); it is intended for tests/remote control, not a full IME.
-- The compositor flushes text-input commits immediately; without that, some
-  clients never see the committed string (this was the original bug).
+注意：
 
-## Tooling
+- 只有实现了 `zwp_text_input_v3` 的客户端才能接收 IME 文本。
+- `KEY_REPLAY` 现在也会通过 seat keymap 把按键注入到聚焦的客户端（由 ASCII keysym 组成）；该功能用于测试或远程控制，并不是完整 IME。
+- 合成器会立即刷新文本输入提交；否则某些客户端可能永远无法看到提交的字符串（这是最初的 bug）。
 
-- `compile_commands.json` is generated into the build directory by CMake; a
-  gitignored symlink is placed at the repository root for clangd/ccls.
-- `.clang-tidy` holds a conservative correctness/performance baseline:
+## 工具
+
+- CMake 会把 `compile_commands.json` 生成到构建目录，并在仓库根目录放置一个被 Git 忽略的符号链接，供 clangd/ccls 使用。
+- `.clang-tidy` 保存了一套保守的正确性/性能检查基线：
 
   ```bash
   clang-tidy -p build src/*.cpp
   ```
 
-## Why the build no longer needs the network
+## 为什么构建不再需要网络
 
-Earlier versions ran `FetchContent` for Crow and a meson/ninja build of wlroots
-during `cmake` configuration, which required network access and could hang for
-tens of minutes. Now:
+早期版本在 CMake 配置阶段通过 `FetchContent` 获取 Crow，并通过 Meson/Ninja 构建 wlroots，因此需要网络访问，并可能挂起数十分钟。现在的行为如下：
 
-1. `find_package` is tried first for every dependency.
-2. Network access only happens for Crow when `MATRIX_FETCH_CROW=ON`.
-3. The wlroots submodule is built only when no system package exists.
+1. 每个依赖都首先尝试使用 `find_package` 查找。
+2. 只有在设置 `MATRIX_FETCH_CROW=ON` 时才会访问网络下载 Crow。
+3. 只有找不到系统 wlroots 软件包时才构建 wlroots 子模块。
