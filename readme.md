@@ -133,19 +133,7 @@ yay -S hackmatrix-git
 
 #### Ubuntu / Debian
 
-```bash
-sudo apt-get install cmake pkg-config build-essential git \
-  libwayland-dev wayland-protocols libwlroots-dev \
-  libxcb1-dev libxcb-composite0-dev libxcb-dri3-dev libxcb-ewmh-dev \
-  libxcb-errors-dev libxcb-icccm4-dev libxcb-present-dev libxcb-render0-dev \
-  libxcb-render-util0-dev libxcb-res0-dev libxcb-shm0-dev libxcb-xfixes0-dev \
-  libxcb-xinput-dev libzmq3-dev libprotobuf-dev protobuf-compiler \
-  libspdlog-dev libfmt-dev libegl-dev libgles2-mesa-dev libassimp-dev \
-  libsqlite3-dev libpixman-1-dev libdrm-dev libxkbcommon-dev \
-  wofi xwayland
-```
-
-> `libwlroots-dev` 必须是 **0.19**。发行版只有旧版本时，改用下面的 submodule 方式。
+关于这类发行版的编译流程，可以参考这个文档：[在Debian/Ubuntu构建](https://github.com/ImMrLee/HackMatrixOptimized/blob/master/docs/debianBUILDING.md)
 
 #### Fedora / CentOS
 
