@@ -94,6 +94,16 @@ TEST_F(SceneFingerprintTest, RuntimeWorldStateDoesNotChangeFingerprint)
   db.exec("INSERT INTO Positionable (entity_id, pos_x) VALUES (1, 42.0)");
   db.exec("CREATE TABLE ServerVoxels (id INTEGER PRIMARY KEY, pos_x REAL)");
   db.exec("INSERT INTO ServerVoxels (pos_x) VALUES (1.0)");
+  db.exec("CREATE TABLE Door (id INTEGER PRIMARY KEY, state INTEGER)");
+  db.exec("INSERT INTO Door (id, state) VALUES (1, 1)");
+  db.exec("CREATE TABLE Lock (entity_id INTEGER PRIMARY KEY, state INTEGER)");
+  db.exec("INSERT INTO Lock (entity_id, state) VALUES (1, 0)");
+  db.exec("CREATE TABLE Key (id INTEGER PRIMARY KEY, state INTEGER)");
+  db.exec("INSERT INTO Key (id, state) VALUES (1, 1)");
+  db.exec("CREATE TABLE RotateMovement (id INTEGER PRIMARY KEY, degrees REAL)");
+  db.exec("INSERT INTO RotateMovement (id, degrees) VALUES (1, 30.0)");
+  db.exec("CREATE TABLE Bootable (entity_id INTEGER PRIMARY KEY, cmd TEXT, pid INTEGER)");
+  db.exec("INSERT INTO Bootable (entity_id, cmd, pid) VALUES (1, 'foot', 123)");
   const auto after = computeSceneFingerprint(db, databaseFile.string());
 
   EXPECT_EQ(before, after);

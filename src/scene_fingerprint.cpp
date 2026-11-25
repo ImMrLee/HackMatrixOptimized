@@ -22,7 +22,7 @@ namespace MultiPlayer {
 namespace {
 
 constexpr std::string_view kFingerprintDomain =
-  "hackmatrix-scene-fingerprint-v3";
+  "hackmatrix-scene-fingerprint-v5";
 
 // Two independent 64-bit streaming hashes are enough to detect accidental
 // scene divergence (a single changed byte flips both). This is deliberately
@@ -232,7 +232,9 @@ isRuntimeStateTable(std::string_view table)
   // broadcasts entity transforms/voxel snapshots and every client converges on
   // that state. Hashing them made two otherwise identical installs reject
   // window sharing just because their last local save differed.
-  return table == "Positionable" || table == "ServerVoxels";
+  return table == "Positionable" || table == "ServerVoxels" ||
+         table == "Door" || table == "Lock" || table == "Key" ||
+         table == "RotateMovement" || table == "Bootable";
 }
 
 std::vector<std::string>

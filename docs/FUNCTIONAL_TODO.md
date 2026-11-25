@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-24：**直接 matrix↔matrix 联机的 scene mismatch 代码复核与修复**：
+  - 复核确认：只有 dedicated server（authority = `kServerAuthorityID`）会绕过本地 DB 指纹；两个主程序直接联机时仍走 `hasSceneMismatch` / `sceneMatches` 门禁；
+  - 原指纹仍包含运行时状态表，导致同一场景因上次保存的 `Positionable`、门/锁/钥匙状态、`RotateMovement`、`Bootable` 布局不同而误报；
+  - 指纹升级到 v5：只哈希静态场景（`Entity`、`Model`、`Light`、`Parent`、`Scriptable` 等），忽略 `Positionable`、`ServerVoxels`、`Door`、`Lock`、`Key`、`RotateMovement`、`Bootable`；
+  - 单测 87/87 通过，新增运行时状态表不影响指纹的断言；
+  - 注意：两个主程序必须使用同一份新构建；不同版本的指纹算法本身就会 mismatch。
+
 - 2026-11-24：**远控窗口自动聚焦/锁定视角与输入直通**：
   - 控制授权成功后，控制器收到 `ControlState` 会请求渲染线程 `focusRemoteApp`：相机移动到共享窗口、切换 cursor 模式，视角不再被鼠标旋转；
   - 相机聚焦完成后把光标移到屏幕中心，用户可直接移动鼠标到共享窗口；
