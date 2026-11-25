@@ -9,7 +9,7 @@ without a compositor, GPU, or ImGui.
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)" --target matrix-server
-./build/matrix-server --port 1234 --db db/matrix.db
+./build/matrix-server --port 7777 --db db/matrix.db
 ```
 
 Options:
