@@ -55,6 +55,9 @@ namespace WindowManager {
     glm::vec3 getAppRotation(entt::entity);
     optional<entt::entity> getLookedAtApp();
     optional<entt::entity> getLookedAtRemoteApp();
+    // Full crosshair hit (entity + world point + surface pixels) with a wide
+    // distance limit, used by free-view window move/resize.
+    optional<AppRayHit> getLookedAtAppHit();
     optional<AppRayHit> raycastApp(const Ray& ray,
                                    float distLimit = 20.0f);
     optional<AppRayHit> raycastAppFromScreen(float mouseX,

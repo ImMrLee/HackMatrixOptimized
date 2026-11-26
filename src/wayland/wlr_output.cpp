@@ -428,7 +428,19 @@ handle_output_frame(wl_listener* listener, void* data)
       }
       bool pointerFocusRequested = wayland_pointer_focus_requested(server);
       bool pointerVisible = pointerFocusRequested || (cursorOverrideSet && cursorOverrideVisible);
-      if (!pointerVisible &&
+      // A free-view window move/resize owns the mouse delta: move the window
+      // instead of rotating the camera while it is active.
+      bool windowManipulated = false;
+      if (controls && controls->isWindowResizeActive()) {
+        controls->handleWindowResizeDelta(server->input.delta_x,
+                                           server->input.delta_y);
+        windowManipulated = true;
+      } else if (controls && controls->isWindowMoveActive()) {
+        controls->handleWindowMoveDelta(server->input.delta_x,
+                                        server->input.delta_y);
+        windowManipulated = true;
+      }
+      if (!windowManipulated && !pointerVisible &&
           (server->input.delta_x != 0.0 || server->input.delta_y != 0.0)) {
         if (controls) {
           controls->applyLookDelta(server->input.delta_x, -server->input.delta_y);

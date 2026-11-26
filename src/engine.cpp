@@ -304,6 +304,9 @@ void Engine::multiplayerClientIteration(double frameStart) {
     } else {
       // Capture/encode shared windows. This runs after renderer->render(), so
       // the GL context is current and the window textures hold this frame.
+      if (controls) {
+        client->setWindowPreviewEntity(controls->windowPreviewEntity());
+      }
       client->tickWindowStreams();
       client->tickWebRtc();
     }

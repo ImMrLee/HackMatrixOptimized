@@ -109,6 +109,9 @@ public:
   // it to move/lock the camera onto that window.
   entt::entity takeRemoteFocusRequest();
   bool takeRemoteUnfocusRequest();
+  // While a local window is being moved/resized in preview, defer its share
+  // transform broadcast until the interaction commits (G / mouse release).
+  void setWindowPreviewEntity(entt::entity entity);
   void requestRemoteControl(uint32_t ownerID, uint32_t shareId);
   void releaseRemoteControl();
   void requestRemoteKeyframe(uint32_t ownerID, uint32_t shareId);
@@ -302,6 +305,7 @@ private:
   std::atomic<uint32_t> authorityID_{ 0 };
   std::atomic<uint32_t> remoteFocusRequest_{ 0xFFFFFFFFu };
   std::atomic<bool> remoteUnfocusRequest_{ false };
+  std::atomic<uint32_t> windowPreviewEntity_{ 0xFFFFFFFFu };
   uint64_t worldSeq_ = 0;          // authority's outgoing sequence
   uint64_t lastAppliedWorldSeq_ = 0; // last authoritative seq applied
   std::mutex worldOutMutex_;

@@ -1000,6 +1000,14 @@ handle_pointer_motion(wl_listener* listener, void* data)
   }
 
   if (free_view_active(handle->server)) {
+    if (handle->server->engine) {
+      if (auto* controls = handle->server->engine->getControls();
+          controls && (controls->isWindowMoveActive() ||
+                       controls->isWindowResizeActive())) {
+        // The manipulation owns the mouse; do not move hover/pointer focus.
+        return;
+      }
+    }
     if (handle->server->free_view_buttons.empty()) {
       update_free_view_hover(handle->server, event->time_msec);
     } else {
@@ -1098,6 +1106,14 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
   }
 
   if (free_view_active(handle->server)) {
+    if (handle->server->engine) {
+      if (auto* controls = handle->server->engine->getControls();
+          controls && (controls->isWindowMoveActive() ||
+                       controls->isWindowResizeActive())) {
+        // The manipulation owns the mouse; do not move hover/pointer focus.
+        return;
+      }
+    }
     if (handle->server->free_view_buttons.empty()) {
       update_free_view_hover(handle->server, event->time_msec);
     } else {
@@ -1230,6 +1246,8 @@ inject_pointer_button(WlrServer* server,
 
   input_activity::lastLocalPointer.store(nowSeconds());
   bool handled = false;
+  Controls* controls =
+    server->engine ? server->engine->getControls() : nullptr;
   // In free look the cursor is hidden and the overlay must not swallow clicks
   // aimed through the crosshair.
   const bool freeLook = free_view_active(server);
@@ -1278,6 +1296,26 @@ inject_pointer_button(WlrServer* server,
     }
   }
 
+  // A G-drag owns the mouse; swallow clicks so they do not reach the window.
+  if (controls && freeLook && controls->isWindowMoveActive()) {
+    return true;
+  }
+
+  // Free look: aiming at a window edge/corner and pressing the left button
+  // starts a resize drag instead of delivering the click. Consume the matching
+  // release so the app never sees a stray press.
+  if (controls && freeLook && !imgui_captured && button == BTN_LEFT) {
+    if (pressed) {
+      WindowManager::AppRayHit aim;
+      if (free_view_aim_hit(server, aim) && controls->beginWindowResize(aim)) {
+        return true;
+      }
+    } else if (controls->isWindowResizeActive()) {
+      controls->endWindowResize();
+      return true;
+    }
+  }
+
   // Free look: the crosshair at the screen centre points into the window.
   // Deliver press, drag and release there without ever taking keyboard focus.
   if (!imgui_captured && freeLook) {
@@ -1292,8 +1330,6 @@ inject_pointer_button(WlrServer* server,
     pointer_surface = server->seat->pointer_state.focused_surface;
   }
   wlr_surface* preferred_surface = nullptr;
-  Controls* controls =
-    server->engine ? server->engine->getControls() : nullptr;
   bool button_consumed_by_controls = false;
   if (pressed && controls && !wayland_focus_requested && !imgui_captured) {
     // If a Wayland client has (or is requesting) focus, bypass game controls so

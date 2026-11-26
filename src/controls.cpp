@@ -1,6 +1,8 @@
 #include "world.h"
 #include <glad/glad.h>
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 
 #include <iostream>
@@ -23,6 +25,7 @@
 #include "TypedKeyOverlay.h"
 #include "time_utils.h"
 #include "remote_app.h"
+#include "screen.h"
 
 using namespace std;
 
@@ -183,6 +186,14 @@ void Controls::handleKeys() {
   // Third, handle keys when the app is focused and return,
   // because no other keys should be handled when focused
   if (appFocused) {
+    // A window gained focus (e.g. via a click); stop any free-view manipulation
+    // so a stale drag cannot keep owning the mouse.
+    if (windowMoveEntity != entt::null) {
+      endWindowMove();
+    }
+    if (windowResizeEntity != entt::null) {
+      endWindowResize();
+    }
     handleUnfocusApp();
     handleCloseFocusedApp();
     handleMoveFocusedApp();
@@ -193,6 +204,7 @@ void Controls::handleKeys() {
   // Finally, handle standard wm keys
   handleMovement();
   handleToggleApp();
+  handleWindowMoveKey();
   handleSpawnTerminal();
   handleReloadConfig();
   handleDMenu();
@@ -247,7 +259,7 @@ Controls::handleDMenu()
 void
 Controls::handleLogBlockType()
 {
-  bool shouldDebug = isPressedEither(XKB_KEY_t, XKB_KEY_T);
+  bool shouldDebug = isPressedEither(XKB_KEY_y, XKB_KEY_Y);
   if (shouldDebug && debounce(lastKeyPressTime)) {
     world->action(LOG_BLOCK_TYPE);
     log_controls("controls: logBlockType\n");
@@ -435,6 +447,371 @@ Controls::returnToFreeLook()
     wm->setCursorVisible(false);
     wm->clearCursorInputFocus();
   }
+}
+
+bool
+Controls::cameraScreenAxes(glm::vec3& right, glm::vec3& up) const
+{
+  if (!camera) {
+    return false;
+  }
+  glm::vec3 front = glm::normalize(camera->front);
+  const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+  right = glm::cross(front, worldUp);
+  if (glm::length(right) < 1e-4f) {
+    right = glm::vec3(1.0f, 0.0f, 0.0f);
+  } else {
+    right = glm::normalize(right);
+  }
+  up = glm::cross(right, front);
+  if (glm::length(up) < 1e-4f) {
+    up = glm::vec3(0.0f, 1.0f, 0.0f);
+  } else {
+    up = glm::normalize(up);
+  }
+  return true;
+}
+
+float
+Controls::worldPerPixelAt(float distance) const
+{
+  if (!camera || SCREEN_HEIGHT <= 0.0f) {
+    return 0.0f;
+  }
+  const glm::mat4 proj = camera->getProjectionMatrix(true);
+  const float p11 = proj[1][1];
+  if (std::fabs(p11) < 1e-6f) {
+    return 0.0f;
+  }
+  return (2.0f * distance) / (p11 * SCREEN_HEIGHT);
+}
+
+void
+Controls::handleWindowMoveKey()
+{
+  const bool held = isPressedEither(XKB_KEY_g, XKB_KEY_G);
+  if (!held) {
+    if (windowMoveEntity != entt::null) {
+      endWindowMove();
+    }
+    return;
+  }
+  if (windowMoveEntity != entt::null) {
+    return;
+  }
+  if (!grabbedCursor || !windowManagerSpace) {
+    return;
+  }
+  if (auto hit = windowManagerSpace->getLookedAtAppHit()) {
+    beginWindowMove(hit->entity, hit->distance);
+  }
+}
+
+bool
+Controls::beginWindowMove(entt::entity entity, float distance)
+{
+  if (!registry || !camera || entity == entt::null ||
+      !registry->valid(entity)) {
+    return false;
+  }
+  auto* comp = registry->try_get<WaylandApp::Component>(entity);
+  if (!comp || !comp->app || comp->accessory || comp->layer_shell) {
+    return false;
+  }
+  if (!registry->all_of<Positionable>(entity)) {
+    return false;
+  }
+  auto& positionable = registry->get<Positionable>(entity);
+  windowMoveEntity = entity;
+  windowMoveDistance =
+    distance > 0.0f ? distance
+                    : glm::length(positionable.pos - camera->position);
+  log_controls("controls: window move begin ent=%d dist=%.3f\n",
+               (int)entt::to_integral(entity),
+               windowMoveDistance);
+  return true;
+}
+
+bool
+Controls::handleWindowMoveDelta(double dx, double dy)
+{
+  if (windowMoveEntity == entt::null || !registry || !camera) {
+    return false;
+  }
+  if (!registry->valid(windowMoveEntity)) {
+    windowMoveEntity = entt::null;
+    return false;
+  }
+  auto* positionable = registry->try_get<Positionable>(windowMoveEntity);
+  if (!positionable) {
+    windowMoveEntity = entt::null;
+    return false;
+  }
+  glm::vec3 right;
+  glm::vec3 up;
+  if (!cameraScreenAxes(right, up)) {
+    return false;
+  }
+  const float ppu = worldPerPixelAt(windowMoveDistance);
+  if (!std::isfinite(ppu) || ppu <= 0.0f) {
+    return false;
+  }
+  positionable->pos += right * (static_cast<float>(dx) * ppu);
+  positionable->pos += up * (static_cast<float>(-dy) * ppu);
+  positionable->damage();
+  return true;
+}
+
+void
+Controls::endWindowMove()
+{
+  if (windowMoveEntity == entt::null) {
+    return;
+  }
+  log_controls("controls: window move commit ent=%d\n",
+               (int)entt::to_integral(windowMoveEntity));
+  windowMoveEntity = entt::null;
+}
+
+bool
+Controls::beginWindowResize(const WindowManager::AppRayHit& hit)
+{
+  if (!registry || !camera || hit.entity == entt::null ||
+      !registry->valid(hit.entity)) {
+    return false;
+  }
+  entt::entity entity = hit.entity;
+  auto* comp = registry->try_get<WaylandApp::Component>(entity);
+  if (!comp || !comp->app || comp->accessory || comp->layer_shell) {
+    return false;
+  }
+  auto* positionable = registry->try_get<Positionable>(entity);
+  if (!positionable) {
+    return false;
+  }
+  const int width = comp->app->getWidth();
+  const int height = comp->app->getHeight();
+  if (width <= 0 || height <= 0) {
+    return false;
+  }
+
+  const float px = hit.surfacePixels.x;
+  const float py = hit.surfacePixels.y;
+  const float margin =
+    std::max(6.0f, std::min(24.0f, 0.04f * std::min(width, height)));
+  bool left = px <= margin;
+  bool right = px >= static_cast<float>(width) - margin;
+  bool top = py <= margin;
+  bool bottom = py >= static_cast<float>(height) - margin;
+  // A very small window can be within margin of both sides; pick the nearer.
+  if (left && right) {
+    if (px < static_cast<float>(width) * 0.5f) {
+      right = false;
+    } else {
+      left = false;
+    }
+  }
+  if (top && bottom) {
+    if (py < static_cast<float>(height) * 0.5f) {
+      bottom = false;
+    } else {
+      top = false;
+    }
+  }
+  if (!left && !right && !top && !bottom) {
+    return false;
+  }
+
+  const glm::quat rotation = glm::quat(glm::radians(positionable->rotate));
+  resizeRightAxis = glm::normalize(rotation * glm::vec3(1.0f, 0.0f, 0.0f));
+  resizeUpAxis = glm::normalize(rotation * glm::vec3(0.0f, 1.0f, 0.0f));
+  resizeW0 = positionable->scale;
+  resizeH0 = positionable->scale * comp->app->heightScalar[1][1];
+  if (resizeH0 <= 0.0f) {
+    resizeH0 = resizeW0;
+  }
+  resizePos0 = positionable->pos;
+  resizePixelW0 = width;
+  resizeDistance = glm::length(positionable->pos - camera->position);
+  resizeLeft = left;
+  resizeRight = right;
+  resizeTop = top;
+  resizeBottom = bottom;
+  windowResizeEntity = entity;
+  log_controls(
+    "controls: window resize begin ent=%d edges=%s%s%s%s %.0fx%.0f\n",
+    (int)entt::to_integral(entity),
+    left ? "L" : "",
+    right ? "R" : "",
+    top ? "T" : "",
+    bottom ? "B" : "",
+    static_cast<double>(width),
+    static_cast<double>(height));
+  return true;
+}
+
+bool
+Controls::handleWindowResizeDelta(double dx, double dy)
+{
+  if (windowResizeEntity == entt::null || !registry || !camera) {
+    return false;
+  }
+  if (!registry->valid(windowResizeEntity)) {
+    windowResizeEntity = entt::null;
+    return false;
+  }
+  auto* positionable = registry->try_get<Positionable>(windowResizeEntity);
+  auto* comp = registry->try_get<WaylandApp::Component>(windowResizeEntity);
+  if (!positionable || !comp || !comp->app) {
+    windowResizeEntity = entt::null;
+    return false;
+  }
+  glm::vec3 camRight;
+  glm::vec3 camUp;
+  if (!cameraScreenAxes(camRight, camUp)) {
+    return false;
+  }
+  const float ppu = worldPerPixelAt(resizeDistance);
+  if (!std::isfinite(ppu) || ppu <= 0.0f) {
+    return false;
+  }
+  const glm::vec3 worldDelta = camRight * (static_cast<float>(dx) * ppu) +
+                               camUp * (static_cast<float>(-dy) * ppu);
+  const float dr = glm::dot(worldDelta, resizeRightAxis);
+  const float du = glm::dot(worldDelta, resizeUpAxis);
+
+  float newW = resizeW0;
+  if (resizeRight) {
+    newW += dr;
+  }
+  if (resizeLeft) {
+    newW -= dr;
+  }
+  float newH = resizeH0;
+  if (resizeTop) {
+    newH += du;
+  }
+  if (resizeBottom) {
+    newH -= du;
+  }
+  constexpr float kMinWorld = 0.12f;
+  constexpr float kMaxWorld = 60.0f;
+  newW = std::clamp(newW, kMinWorld, kMaxWorld);
+  newH = std::clamp(newH, kMinWorld, kMaxWorld);
+
+  // Anchor the opposite edge: shift the centre by half the size delta.
+  const float dW = newW - resizeW0;
+  const float dH = newH - resizeH0;
+  glm::vec3 shift(0.0f);
+  if (resizeRight) {
+    shift += resizeRightAxis * (dW * 0.5f);
+  }
+  if (resizeLeft) {
+    shift -= resizeRightAxis * (dW * 0.5f);
+  }
+  if (resizeTop) {
+    shift += resizeUpAxis * (dH * 0.5f);
+  }
+  if (resizeBottom) {
+    shift -= resizeUpAxis * (dH * 0.5f);
+  }
+  positionable->pos = resizePos0 + shift;
+  positionable->scale = newW;
+  // World width is `scale`; the in-world height is scale * heightScalar.y.
+  // Drive the preview aspect so the dragged edges track the mouse.
+  comp->app->heightScalar =
+    glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, newH / newW, 1.0f));
+  positionable->damage();
+  return true;
+}
+
+void
+Controls::endWindowResize()
+{
+  if (windowResizeEntity == entt::null) {
+    return;
+  }
+  entt::entity entity = windowResizeEntity;
+  windowResizeEntity = entt::null;
+  if (!registry || !registry->valid(entity)) {
+    return;
+  }
+  auto* positionable = registry->try_get<Positionable>(entity);
+  auto* comp = registry->try_get<WaylandApp::Component>(entity);
+  if (!positionable || !comp || !comp->app) {
+    return;
+  }
+  const float worldW = std::max(1e-3f, positionable->scale);
+  const float aspect =
+    std::clamp(comp->app->heightScalar[1][1], 0.05f, 20.0f);
+  const float worldScaleX = worldW / std::max(1e-3f, resizeW0);
+  int pixelW = static_cast<int>(
+    std::lround(static_cast<float>(resizePixelW0) * worldScaleX));
+  int pixelH = static_cast<int>(std::lround(static_cast<float>(pixelW) * aspect));
+  pixelW = std::clamp(pixelW, 64, 8192);
+  pixelH = std::clamp(pixelH, 64, 8192);
+  // Update local geometry now; ask the client for the real configure. The
+  // committed surface size refreshes heightScalar again on the next commit.
+  comp->app->resize(pixelW, pixelH);
+  comp->app->requestSize(pixelW, pixelH);
+  positionable->damage();
+  log_controls("controls: window resize commit ent=%d -> %dx%d world=%.3f\n",
+               (int)entt::to_integral(entity),
+               pixelW,
+               pixelH,
+               static_cast<double>(worldW));
+}
+
+entt::entity
+Controls::windowPreviewEntity() const
+{
+  return windowResizeEntity != entt::null ? windowResizeEntity
+                                          : windowMoveEntity;
+}
+
+unsigned
+Controls::windowResizeHoverMask()
+{
+  if (!grabbedCursor || !windowManagerSpace || !registry) {
+    return 0;
+  }
+  auto hit = windowManagerSpace->getLookedAtAppHit();
+  if (!hit.has_value()) {
+    return 0;
+  }
+  auto* comp = registry->try_get<WaylandApp::Component>(hit->entity);
+  if (!comp || !comp->app || comp->accessory || comp->layer_shell) {
+    return 0;
+  }
+  const int width = comp->app->getWidth();
+  const int height = comp->app->getHeight();
+  if (width <= 0 || height <= 0) {
+    return 0;
+  }
+  const float px = hit->surfacePixels.x;
+  const float py = hit->surfacePixels.y;
+  const float margin =
+    std::max(6.0f, std::min(24.0f, 0.04f * std::min(width, height)));
+  unsigned mask = 0;
+  if (px <= margin) {
+    mask |= 1u;
+  }
+  if (px >= static_cast<float>(width) - margin) {
+    mask |= 2u;
+  }
+  if (py <= margin) {
+    mask |= 4u;
+  }
+  if (py >= static_cast<float>(height) - margin) {
+    mask |= 8u;
+  }
+  if ((mask & 3u) == 3u) {
+    mask &= (px < static_cast<float>(width) * 0.5f) ? ~2u : ~1u;
+  }
+  if ((mask & 12u) == 12u) {
+    mask &= (py < static_cast<float>(height) * 0.5f) ? ~8u : ~4u;
+  }
+  return mask;
 }
 
 void

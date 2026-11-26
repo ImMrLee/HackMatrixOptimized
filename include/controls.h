@@ -60,6 +60,26 @@ class Controls
   bool keysEnabled = true;
   std::function<void()> pointerCenterCallback;
 
+  // Free-view window move (G) / resize (edge drag) preview state.
+  entt::entity windowMoveEntity = entt::null;
+  float windowMoveDistance = 0.0f;
+  entt::entity windowResizeEntity = entt::null;
+  bool resizeLeft = false;
+  bool resizeRight = false;
+  bool resizeTop = false;
+  bool resizeBottom = false;
+  float resizeW0 = 0.0f;
+  float resizeH0 = 0.0f;
+  int resizePixelW0 = 0;
+  glm::vec3 resizePos0{ 0.0f };
+  glm::vec3 resizeRightAxis{ 1.0f, 0.0f, 0.0f };
+  glm::vec3 resizeUpAxis{ 0.0f, 1.0f, 0.0f };
+  float resizeDistance = 0.0f;
+
+  void handleWindowMoveKey();
+  bool cameraScreenAxes(glm::vec3& right, glm::vec3& up) const;
+  float worldPerPixelAt(float distance) const;
+
   std::unordered_set<xkb_keysym_t> pressed;
 
   struct KeysymEvent {
@@ -145,6 +165,27 @@ public:
   {
     pointerCenterCallback = std::move(callback);
   }
+
+  // Free-view window manipulation. Move: hold G and move the mouse.
+  // Resize: aim the crosshair at a window edge/corner and drag with the left
+  // button. Both only preview locally; the shared-window transform is
+  // committed (broadcast once) when the interaction ends.
+  bool beginWindowMove(entt::entity entity, float distance);
+  bool handleWindowMoveDelta(double dx, double dy);
+  void endWindowMove();
+  bool isWindowMoveActive() const { return windowMoveEntity != entt::null; }
+
+  bool beginWindowResize(const WindowManager::AppRayHit& hit);
+  bool handleWindowResizeDelta(double dx, double dy);
+  void endWindowResize();
+  bool isWindowResizeActive() const { return windowResizeEntity != entt::null; }
+
+  // Entity currently being previewed (move or resize); entt::null otherwise.
+  entt::entity windowPreviewEntity() const;
+
+  // Edge/corner mask under the free-view crosshair for cursor feedback:
+  // bit0 left, bit1 right, bit2 top, bit3 bottom.
+  unsigned windowResizeHoverMask();
   void moveTo(glm::vec3 pos,
               optional<glm::vec3> rotation,
               float secs,

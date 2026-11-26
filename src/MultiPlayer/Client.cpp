@@ -1187,23 +1187,31 @@ Client::tickWindowStreams()
   std::vector<std::pair<uint32_t, WindowShareTransformData>> transforms;
   {
     std::lock_guard<std::mutex> lock(shareMutex);
+    const uint32_t previewEntity = windowPreviewEntity_.load();
     for (auto& [shareId, share] : localWindowShares) {
-      if (auto* positionable = registry->try_get<Positionable>(share.entity)) {
-        if (positionable->pos != share.pos ||
-            positionable->origin != share.origin ||
-            positionable->rotate != share.rotate ||
-            positionable->scale != share.scale) {
-          share.pos = positionable->pos;
-          share.origin = positionable->origin;
-          share.rotate = positionable->rotate;
-          share.scale = positionable->scale;
-          WindowShareTransformData transform;
-          transform.shareId = shareId;
-          transform.pos = share.pos;
-          transform.origin = share.origin;
-          transform.rotate = share.rotate;
-          transform.scale = share.scale;
-          transforms.emplace_back(shareId, transform);
+      // A local move/resize preview keeps the last committed transform until
+      // the interaction ends, so remote viewers get one update on release.
+      const bool previewing =
+        previewEntity != 0xFFFFFFFFu &&
+        previewEntity == static_cast<uint32_t>(entt::to_integral(share.entity));
+      if (!previewing) {
+        if (auto* positionable = registry->try_get<Positionable>(share.entity)) {
+          if (positionable->pos != share.pos ||
+              positionable->origin != share.origin ||
+              positionable->rotate != share.rotate ||
+              positionable->scale != share.scale) {
+            share.pos = positionable->pos;
+            share.origin = positionable->origin;
+            share.rotate = positionable->rotate;
+            share.scale = positionable->scale;
+            WindowShareTransformData transform;
+            transform.shareId = shareId;
+            transform.pos = share.pos;
+            transform.origin = share.origin;
+            transform.rotate = share.rotate;
+            transform.scale = share.scale;
+            transforms.emplace_back(shareId, transform);
+          }
         }
       }
 
@@ -2354,6 +2362,14 @@ bool
 Client::takeRemoteUnfocusRequest()
 {
   return remoteUnfocusRequest_.exchange(false);
+}
+
+void
+Client::setWindowPreviewEntity(entt::entity entity)
+{
+  windowPreviewEntity_.store(
+    entity == entt::null ? 0xFFFFFFFFu
+                         : static_cast<uint32_t>(entt::to_integral(entity)));
 }
 
 bool

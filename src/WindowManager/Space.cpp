@@ -344,6 +344,19 @@ Space::getLookedAtRemoteApp()
 }
 
 optional<AppRayHit>
+Space::getLookedAtAppHit()
+{
+  if (!camera || SCREEN_WIDTH <= 0.0f || SCREEN_HEIGHT <= 0.0f) {
+    return std::nullopt;
+  }
+  return raycastAppFromScreen(SCREEN_WIDTH * 0.5f,
+                              SCREEN_HEIGHT * 0.5f,
+                              SCREEN_WIDTH,
+                              SCREEN_HEIGHT,
+                              10000.0f);
+}
+
+optional<AppRayHit>
 Space::raycastApp(const Ray& ray, float distLimit)
 {
   if (!registry) {

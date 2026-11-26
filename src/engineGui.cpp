@@ -162,11 +162,23 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
                       color,
                       thickness);
       };
+      // Amber crosshair when the centre ray is over a window edge/corner, so
+      // free-view resize is discoverable.
+      const unsigned edgeMask = controls->windowResizeHoverMask();
+      const ImU32 fg = edgeMask != 0 ? IM_COL32(255, 190, 60, 235)
+                                     : IM_COL32(255, 255, 255, 220);
       cross(IM_COL32(0, 0, 0, 180), 3.0f);
-      cross(IM_COL32(255, 255, 255, 220), 1.0f);
-      draw->AddCircleFilled(ImVec2(cx, cy),
-                            1.25f,
-                            IM_COL32(255, 255, 255, 220));
+      cross(fg, 1.0f);
+      draw->AddCircleFilled(ImVec2(cx, cy), 1.25f, fg);
+      if (edgeMask != 0) {
+        constexpr float s = 9.0f;
+        draw->AddRect(ImVec2(cx - s, cy - s),
+                      ImVec2(cx + s, cy + s),
+                      fg,
+                      0.0f,
+                      0,
+                      1.5f);
+      }
     }
   }
 

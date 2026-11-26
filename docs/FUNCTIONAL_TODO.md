@@ -85,6 +85,14 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-26：**自由视角窗口拖动/缩放（松手提交）**：
+  - 自由视角按住 `G` + 鼠标相对移动拖动准星命中的本地窗口；不显示光标、不打断视角；
+  - 准星放到窗口四角/四边时准星变琥珀色并出现小方框提示；按住左键拖动缩放，锚定对角/对边；窗宽由 `Positionable.scale` 决定，窗高由 `heightScalar.y` 决定，拖动过程只做本地预览；
+  - 松手时才提交：缩放提交一次 `requestSize`，共享窗口的 `Transform` 广播在拖动/缩放期间被抑制，松手后只发一次；未共享窗口不影响；
+  - 仅允许操作本地 `WaylandApp`；远端共享窗口需通过控制授权由 owner 执行；
+  - `handleLogBlockType` 热键由 `T` 改为 `Y`，为后续聊天腾出 `T`；
+  - 单测 87/87 通过。
+
 - 2026-11-24：**直接 matrix↔matrix 联机的 scene mismatch 代码复核与修复**：
   - 复核确认：只有 dedicated server（authority = `kServerAuthorityID`）会绕过本地 DB 指纹；两个主程序直接联机时仍走 `hasSceneMismatch` / `sceneMatches` 门禁；
   - 原指纹仍包含运行时状态表，导致同一场景因上次保存的 `Positionable`、门/锁/钥匙状态、`RotateMovement`、`Bootable` 布局不同而误报；
