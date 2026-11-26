@@ -518,6 +518,23 @@ free_view_active(WlrServer* server)
   return !wm->hasCurrentOrPendingFocus();
 }
 
+// Free view has no cursor, so ImGui must not see the hidden pointer: otherwise
+// the debug panels hover/click and can steal keys or resize themselves.
+static void
+feed_imgui_pointer(WlrServer* server, bool freeLook)
+{
+  if (!server || !server->engine) {
+    return;
+  }
+  if (freeLook) {
+    const bool noButtons[3] = { false, false, false };
+    server->engine->updateImGuiPointer(-100000.0f, -100000.0f, noButtons);
+    return;
+  }
+  server->engine->updateImGuiPointer(
+    server->pointer_x, server->pointer_y, server->input.mouse_buttons);
+}
+
 bool
 free_view_pointer_active(const WlrServer* server)
 {
@@ -552,6 +569,45 @@ free_view_aim_hit(WlrServer* server, WindowManager::AppRayHit& hit)
   constexpr float kCrosshairRayDistance = 10000.0f;
   auto found = space->raycastAppFromScreen(
     width * 0.5f, height * 0.5f, width, height, kCrosshairRayDistance);
+  if (!found.has_value()) {
+    return false;
+  }
+  hit = *found;
+  return true;
+}
+
+// Aim for window move/resize: crosshair in free view, real pointer when the
+// cursor is visible.
+static bool
+window_aim_hit(WlrServer* server, WindowManager::AppRayHit& hit)
+{
+  if (!server || !server->engine || !server->primary_output) {
+    return false;
+  }
+  auto* controls = server->engine->getControls();
+  if (controls && controls->isCursorGrabbed()) {
+    return free_view_aim_hit(server, hit);
+  }
+  auto wm = server->engine->getWindowManager();
+  if (!wm) {
+    return false;
+  }
+  auto space = wm->getSpace();
+  if (!space) {
+    return false;
+  }
+  const float width = static_cast<float>(server->primary_output->width);
+  const float height = static_cast<float>(server->primary_output->height);
+  if (width <= 0.0f || height <= 0.0f) {
+    return false;
+  }
+  auto pointer = output_local_pointer(server, server->primary_output);
+  auto found = space->raycastAppFromScreen(
+    static_cast<float>(pointer.first),
+    static_cast<float>(pointer.second),
+    width,
+    height,
+    10000.0f);
   if (!found.has_value()) {
     return false;
   }
@@ -982,10 +1038,13 @@ handle_pointer_motion(wl_listener* listener, void* data)
     handle->server->pointer_y = handle->server->cursor->y;
   }
   if (handle->server->engine) {
-    handle->server->engine->updateImGuiPointer(
-      handle->server->pointer_x,
-      handle->server->pointer_y,
-      handle->server->input.mouse_buttons);
+    feed_imgui_pointer(handle->server, free_view_active(handle->server));
+    if (auto* controls = handle->server->engine->getControls()) {
+      auto local =
+        output_local_pointer(handle->server, handle->server->primary_output);
+      controls->setPointerScreenPosition(static_cast<float>(local.first),
+                                        static_cast<float>(local.second));
+    }
   }
 
   if (auto* client = remoteWindowController(handle->server);
@@ -999,15 +1058,15 @@ handle_pointer_motion(wl_listener* listener, void* data)
     return;
   }
 
-  if (free_view_active(handle->server)) {
-    if (handle->server->engine) {
-      if (auto* controls = handle->server->engine->getControls();
-          controls && (controls->isWindowMoveActive() ||
-                       controls->isWindowResizeActive())) {
-        // The manipulation owns the mouse; do not move hover/pointer focus.
-        return;
-      }
+  if (handle->server->engine) {
+    if (auto* controls = handle->server->engine->getControls();
+        controls && (controls->isWindowMoveActive() ||
+                     controls->isWindowResizeActive())) {
+      // The manipulation owns the mouse; do not move hover/pointer focus.
+      return;
     }
+  }
+  if (free_view_active(handle->server)) {
     if (handle->server->free_view_buttons.empty()) {
       update_free_view_hover(handle->server, event->time_msec);
     } else {
@@ -1088,10 +1147,13 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
     handle->server->pointer_y = handle->server->cursor->y;
   }
   if (handle->server->engine) {
-    handle->server->engine->updateImGuiPointer(
-      handle->server->pointer_x,
-      handle->server->pointer_y,
-      handle->server->input.mouse_buttons);
+    feed_imgui_pointer(handle->server, free_view_active(handle->server));
+    if (auto* controls = handle->server->engine->getControls()) {
+      auto local =
+        output_local_pointer(handle->server, handle->server->primary_output);
+      controls->setPointerScreenPosition(static_cast<float>(local.first),
+                                        static_cast<float>(local.second));
+    }
   }
 
   if (auto* client = remoteWindowController(handle->server);
@@ -1105,15 +1167,15 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
     return;
   }
 
-  if (free_view_active(handle->server)) {
-    if (handle->server->engine) {
-      if (auto* controls = handle->server->engine->getControls();
-          controls && (controls->isWindowMoveActive() ||
-                       controls->isWindowResizeActive())) {
-        // The manipulation owns the mouse; do not move hover/pointer focus.
-        return;
-      }
+  if (handle->server->engine) {
+    if (auto* controls = handle->server->engine->getControls();
+        controls && (controls->isWindowMoveActive() ||
+                     controls->isWindowResizeActive())) {
+      // The manipulation owns the mouse; do not move hover/pointer focus.
+      return;
     }
+  }
+  if (free_view_active(handle->server)) {
     if (handle->server->free_view_buttons.empty()) {
       update_free_view_hover(handle->server, event->time_msec);
     } else {
@@ -1267,8 +1329,7 @@ inject_pointer_button(WlrServer* server,
     if (slot >= 0) {
       server->input.mouse_buttons[slot] = pressed;
     }
-    engine->updateImGuiPointer(
-      server->pointer_x, server->pointer_y, server->input.mouse_buttons);
+    feed_imgui_pointer(server, freeLook);
     imgui_captured = engine->imguiWantsMouse() && !freeLook;
   }
 
@@ -1296,18 +1357,27 @@ inject_pointer_button(WlrServer* server,
     }
   }
 
+  // Window manipulation works in free view and while the cursor is visible but
+  // no app owns focus. With a focused app, input belongs to that app.
+  bool manipMode = false;
+  if (controls && !imgui_captured && server->engine) {
+    auto wm = server->engine->getWindowManager();
+    manipMode = controls->isCursorGrabbed() ||
+                (wm && !wm->hasCurrentOrPendingFocus());
+  }
+
   // A G-drag owns the mouse; swallow clicks so they do not reach the window.
-  if (controls && freeLook && controls->isWindowMoveActive()) {
+  if (controls && manipMode && controls->isWindowMoveActive()) {
     return true;
   }
 
-  // Free look: aiming at a window edge/corner and pressing the left button
-  // starts a resize drag instead of delivering the click. Consume the matching
-  // release so the app never sees a stray press.
-  if (controls && freeLook && !imgui_captured && button == BTN_LEFT) {
+  // Aiming at a window edge/corner and pressing the left button starts a
+  // resize drag instead of delivering the click. Consume the matching release
+  // so the app never sees a stray press.
+  if (controls && manipMode && button == BTN_LEFT) {
     if (pressed) {
       WindowManager::AppRayHit aim;
-      if (free_view_aim_hit(server, aim) && controls->beginWindowResize(aim)) {
+      if (window_aim_hit(server, aim) && controls->beginWindowResize(aim)) {
         return true;
       }
     } else if (controls->isWindowResizeActive()) {

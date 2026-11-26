@@ -12,6 +12,8 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <mutex>
 #include <xkbcommon/xkbcommon.h>
@@ -479,11 +481,28 @@ Controls::worldPerPixelAt(float distance) const
     return 0.0f;
   }
   const glm::mat4 proj = camera->getProjectionMatrix(true);
-  const float p11 = proj[1][1];
-  if (std::fabs(p11) < 1e-6f) {
+  // invertY flips projection[1][1], so use its magnitude: world units per
+  // screen pixel at `distance` is 2 * distance / (|p11| * screenHeight).
+  const float p11 = std::fabs(proj[1][1]);
+  if (p11 < 1e-6f) {
     return 0.0f;
   }
   return (2.0f * distance) / (p11 * SCREEN_HEIGHT);
+}
+
+std::optional<WindowManager::AppRayHit>
+Controls::windowAimHit()
+{
+  if (!windowManagerSpace) {
+    return std::nullopt;
+  }
+  // Free view (cursor grabbed) aims with the screen-centre crosshair; a visible
+  // cursor aims with the real pointer position.
+  if (grabbedCursor) {
+    return windowManagerSpace->getLookedAtAppHit();
+  }
+  return windowManagerSpace->raycastAppFromScreen(
+    pointerScreenX, pointerScreenY, SCREEN_WIDTH, SCREEN_HEIGHT, 10000.0f);
 }
 
 void
@@ -491,6 +510,7 @@ Controls::handleWindowMoveKey()
 {
   const bool held = isPressedEither(XKB_KEY_g, XKB_KEY_G);
   if (!held) {
+    windowMoveNoHitLogged = false;
     if (windowMoveEntity != entt::null) {
       endWindowMove();
     }
@@ -499,12 +519,25 @@ Controls::handleWindowMoveKey()
   if (windowMoveEntity != entt::null) {
     return;
   }
-  if (!grabbedCursor || !windowManagerSpace) {
+  if (!grabbedCursor && isPressedEither(XKB_KEY_g, XKB_KEY_G)) {
+    // Cursor mode without a focused app can still move a window, but stay out
+    // of the way when an app owns keyboard focus (handleKeys returns earlier).
+  }
+  auto hit = windowAimHit();
+  if (!hit.has_value()) {
+    if (!windowMoveNoHitLogged) {
+      windowMoveNoHitLogged = true;
+      log_controls(
+        "controls: window move: G held but no window under aim "
+        "(grabbed=%d space=%d pointer=%.1f,%.1f)\n",
+        grabbedCursor ? 1 : 0,
+        windowManagerSpace ? 1 : 0,
+        static_cast<double>(pointerScreenX),
+        static_cast<double>(pointerScreenY));
+    }
     return;
   }
-  if (auto hit = windowManagerSpace->getLookedAtAppHit()) {
-    beginWindowMove(hit->entity, hit->distance);
-  }
+  beginWindowMove(hit->entity, hit->distance);
 }
 
 bool
@@ -516,9 +549,17 @@ Controls::beginWindowMove(entt::entity entity, float distance)
   }
   auto* comp = registry->try_get<WaylandApp::Component>(entity);
   if (!comp || !comp->app || comp->accessory || comp->layer_shell) {
+    log_controls(
+      "controls: window move rejected ent=%d comp=%d acc=%d layer=%d\n",
+      (int)entt::to_integral(entity),
+      comp ? 1 : 0,
+      comp && comp->accessory ? 1 : 0,
+      comp && comp->layer_shell ? 1 : 0);
     return false;
   }
   if (!registry->all_of<Positionable>(entity)) {
+    log_controls("controls: window move rejected ent=%d (no Positionable)\n",
+                 (int)entt::to_integral(entity));
     return false;
   }
   auto& positionable = registry->get<Positionable>(entity);
@@ -526,9 +567,22 @@ Controls::beginWindowMove(entt::entity entity, float distance)
   windowMoveDistance =
     distance > 0.0f ? distance
                     : glm::length(positionable.pos - camera->position);
-  log_controls("controls: window move begin ent=%d dist=%.3f\n",
+  windowMoveDeltaLogged = false;
+  log_controls("controls: window move begin ent=%d dist=%.3f pos=(%.3f,%.3f,%.3f) scale=%.3f\n",
                (int)entt::to_integral(entity),
-               windowMoveDistance);
+               static_cast<double>(windowMoveDistance),
+               static_cast<double>(positionable.pos.x),
+               static_cast<double>(positionable.pos.y),
+               static_cast<double>(positionable.pos.z),
+               static_cast<double>(positionable.scale));
+  // Headless verification hook: apply a fixed one-shot delta on grab.
+  if (const char* dragTest = std::getenv("HACKMATRIX_DEBUG_WINDOW_DRAG")) {
+    double dx = 0.0;
+    double dy = 0.0;
+    if (std::sscanf(dragTest, "%lf,%lf", &dx, &dy) == 2) {
+      handleWindowMoveDelta(dx, dy);
+    }
+  }
   return true;
 }
 
@@ -550,15 +604,44 @@ Controls::handleWindowMoveDelta(double dx, double dy)
   glm::vec3 right;
   glm::vec3 up;
   if (!cameraScreenAxes(right, up)) {
+    if (!windowMoveDeltaLogged) {
+      log_controls("controls: window move delta: camera axes failed\n");
+    }
     return false;
   }
   const float ppu = worldPerPixelAt(windowMoveDistance);
   if (!std::isfinite(ppu) || ppu <= 0.0f) {
+    if (!windowMoveDeltaLogged) {
+      const glm::mat4 proj = camera->getProjectionMatrix(true);
+      log_controls(
+        "controls: window move delta: bad ppu=%.6f screenH=%.1f p11=%.6f "
+        "dist=%.3f\n",
+        static_cast<double>(ppu),
+        static_cast<double>(SCREEN_HEIGHT),
+        static_cast<double>(proj[1][1]),
+        static_cast<double>(windowMoveDistance));
+    }
     return false;
   }
+  const glm::vec3 before = positionable->pos;
   positionable->pos += right * (static_cast<float>(dx) * ppu);
   positionable->pos += up * (static_cast<float>(-dy) * ppu);
   positionable->damage();
+  if (!windowMoveDeltaLogged) {
+    windowMoveDeltaLogged = true;
+    log_controls(
+      "controls: window move delta dx=%.3f dy=%.3f ppu=%.6f "
+      "before=(%.3f,%.3f,%.3f) after=(%.3f,%.3f,%.3f)\n",
+      dx,
+      dy,
+      static_cast<double>(ppu),
+      static_cast<double>(before.x),
+      static_cast<double>(before.y),
+      static_cast<double>(before.z),
+      static_cast<double>(positionable->pos.x),
+      static_cast<double>(positionable->pos.y),
+      static_cast<double>(positionable->pos.z));
+  }
   return true;
 }
 
@@ -643,6 +726,7 @@ Controls::beginWindowResize(const WindowManager::AppRayHit& hit)
   resizeTop = top;
   resizeBottom = bottom;
   windowResizeEntity = entity;
+  windowResizeDeltaLogged = false;
   log_controls(
     "controls: window resize begin ent=%d edges=%s%s%s%s %.0fx%.0f\n",
     (int)entt::to_integral(entity),
@@ -730,6 +814,18 @@ Controls::handleWindowResizeDelta(double dx, double dy)
     glm::mat4(1.0f),
     glm::vec3(1.0f, newH / (standardRatio * newW), 1.0f));
   positionable->damage();
+  if (!windowResizeDeltaLogged) {
+    windowResizeDeltaLogged = true;
+    log_controls(
+      "controls: window resize delta dx=%.3f dy=%.3f W0=%.3f H0=%.3f "
+      "newW=%.3f newH=%.3f\n",
+      dx,
+      dy,
+      static_cast<double>(resizeW0),
+      static_cast<double>(resizeH0),
+      static_cast<double>(newW),
+      static_cast<double>(newH));
+  }
   return true;
 }
 

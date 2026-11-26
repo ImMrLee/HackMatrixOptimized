@@ -79,6 +79,12 @@ class Controls
   void handleWindowMoveKey();
   bool cameraScreenAxes(glm::vec3& right, glm::vec3& up) const;
   float worldPerPixelAt(float distance) const;
+  std::optional<WindowManager::AppRayHit> windowAimHit();
+  float pointerScreenX = 0.0f;
+  float pointerScreenY = 0.0f;
+  bool windowMoveNoHitLogged = false;
+  bool windowMoveDeltaLogged = false;
+  bool windowResizeDeltaLogged = false;
 
   std::unordered_set<xkb_keysym_t> pressed;
 
@@ -186,6 +192,15 @@ public:
   // Edge/corner mask under the free-view crosshair for cursor feedback:
   // bit0 left, bit1 right, bit2 top, bit3 bottom.
   unsigned windowResizeHoverMask();
+
+  // Screen-space pointer position in output-local pixels. Used for window
+  // move/resize when the cursor is visible (cursor mode) instead of the
+  // crosshair.
+  void setPointerScreenPosition(float x, float y)
+  {
+    pointerScreenX = x;
+    pointerScreenY = y;
+  }
   void moveTo(glm::vec3 pos,
               optional<glm::vec3> rotation,
               float secs,

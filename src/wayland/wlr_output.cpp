@@ -398,6 +398,9 @@ handle_output_frame(wl_listener* listener, void* data)
     Camera* camera = server->engine->getCamera();
     if (camera) {
       if (controls) {
+        auto local = output_local_pointer(server, handle->output);
+        controls->setPointerScreenPosition(static_cast<float>(local.first),
+                                          static_cast<float>(local.second));
         //controls->applyMovementInput(
          // server->input.forward, server->input.back, server->input.left, server->input.right);
       }
