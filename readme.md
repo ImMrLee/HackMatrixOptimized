@@ -50,6 +50,12 @@ HackMatrix 使用 `wofi`.
 ### 关闭窗口
 视角锁定到特定窗口然后按下 `Super+q`
 
+### 拖动窗口
+在自由视角下按住G可以任意拖动窗口位置，也可以按移动方向键移动窗口位置
+
+### 调整窗口大小
+在自由视角下准星对准窗口边缘按住鼠标左键就可以调整窗口大小
+
 ### 快捷键
 
 为了便于使用和调试，这个桌面环境有很多特殊快捷键
@@ -82,259 +88,24 @@ HackMatrix主界面的顶部有一个菜单.
 See the [wiki page](https://github.com/collinalexbell/HackMatrix/wiki/Game-Engine) for more info about the game engine and how to use the editor.
 
 这个菜单还有Multyplayer模式，功能大致是可以让其他使用hackmartix的用户可以加入其他人的环境（有点意思，原作者没有说明这个功能，但我发现这个只是能相互看到各自的头像，不能多窗口互联）
+
 ## 编译 / 安装
 
-### 依赖
+完整的依赖安装、发行版命令、wlroots / Crow 配置、构建选项、测试、打包和专用服务器构建，见：
 
-**构建依赖**
+- **[docs/BUILDING.md](docs/BUILDING.md)**
 
-- CMake、pkg-config、C/C++ 编译器（`base-devel` / `build-essential`）
-- `wayland`、`wayland-protocols`
-- **wlroots 0.19**（优先系统包；没有则用仓库 submodule，需要 `meson` + `ninja`）
-- wlroots X11 后端 / XWayland 所需 XCB 库
-- ZeroMQ（`libzmq`）
-- Protocol Buffers（`libprotobuf` + `protoc`，两者版本必须一致）
-- `spdlog`、`fmt`
-- EGL、OpenGL ES 2
-- `assimp`
-- `sqlite3`
-- `pixman`、`libdrm`、`libxkbcommon`（通常由 wlroots 带出，建议显式安装）
-
-**运行时依赖**（构建时不需要）
-
-- `wofi`：默认应用菜单（可在 `config.yaml` 的 `menu_program` 改）
-- `xorg-xwayland` / `xwayland`：运行 X11 程序时需要
-- 一个可用的 Wayland 会话或 DRM 设备；仓库根目录的 `./launch` 会处理
-
-**可选**
-
-- Crow：多人 Web GUI（`MATRIX_ENABLE_WEBGUI`，默认 ON，但找不到 Crow 会自动关闭）
-- GTest：单元测试（`MATRIX_BUILD_TESTS`，默认 ON）
-- `meson` + `ninja`：只在使用 bundled wlroots 时需要
-
-> `pthread` 属于 glibc，无需单独安装。`glm`、ImGui、EnTT、Tracy、ENet 等已随仓库提供。
-
-#### Arch Linux
-
-```bash
-sudo pacman -S --needed base-devel cmake git pkgconf \
-  wayland wayland-protocols wlroots0.19 \
-  libxcb xcb-util-errors xcb-util-wm xcb-util-renderutil \
-  protobuf zeromq spdlog fmt mesa assimp sqlite \
-  libdrm pixman libxkbcommon \
-  wofi xorg-xwayland
-```
-
-也可以直接用 AUR 包，或仓库里的 `distributions/arch/PKGBUILD`：
-
-```bash
-yay -S hackmatrix-git
-```
-
-#### Ubuntu / Debian
-
-关于这类发行版的编译流程，可以参考这个文档：[在Debian/Ubuntu构建](https://github.com/ImMrLee/HackMatrixOptimized/blob/master/docs/debianBUILDING.md)
-
-#### Fedora / CentOS
-
-```bash
-sudo dnf install cmake git pkgconf-pkg-config @development-tools \
-  wayland-devel wayland-protocols-devel wlroots-devel \
-  libxcb-devel xcb-util-errors-devel xcb-util-wm-devel xcb-util-renderutil-devel \
-  zeromq-devel protobuf-devel protobuf-compiler \
-  spdlog-devel fmt-devel mesa-libEGL-devel mesa-libGLES-devel \
-  assimp-devel sqlite-devel pixman-devel libdrm-devel libxkbcommon-devel \
-  wofi xorg-x11-server-Xwayland
-```
-
-> `wlroots-devel` 需要 0.19；版本不符时用 submodule 方式。
-
-#### Gentoo
-
-```bash
-sudo emerge --autounmask-write \
-  dev-build/cmake dev-vcs/git dev-util/pkgconf \
-  dev-libs/wayland dev-libs/wayland-protocols gui-libs/wlroots \
-  x11-libs/libxcb x11-libs/xcb-util-errors x11-libs/xcb-util-wm \
-  x11-libs/xcb-util-renderutil net-libs/zeromq dev-libs/protobuf \
-  dev-libs/spdlog dev-libs/libfmt media-libs/mesa dev-db/sqlite \
-  media-libs/assimp x11-libs/pixman x11-libs/libdrm x11-libs/libxkbcommon \
-  gui-apps/wofi x11-base/xwayland
-```
-
-> USE flag 和 mask 需要按自己的系统处理；`gui-libs/wlroots` 必须是 0.19。
-
----
-
-### wlroots
-
-默认使用系统 wlroots：
-
-```bash
-cmake -S . -B build
-```
-
-没有系统 0.19 时，初始化 submodule 并让 CMake 编译它：
-
-```bash
-git submodule update --init --recursive
-cmake -S . -B build -DMATRIX_USE_SYSTEM_WLROOTS=OFF
-```
-
-- 需要 `meson` 和 `ninja`
-- submodule 固定为 **0.19.3**
-- 系统版本与 submodule 不一致时默认只警告；加 `-DMATRIX_STRICT_WLROOTS_VERSION=ON` 可改为直接报错
-
----
-
-### Crow（可选，多人 Web GUI）
-
-默认流程：
-
-1. `find_package(Crow)` 找系统包
-2. 找不到 → **不会联网下载**，自动关闭 `MATRIX_ENABLE_WEBGUI` 并给出警告
-3. 需要联网下载：`-DMATRIX_FETCH_CROW=ON`（固定 revision `c61a26e`）
-4. 离线/本地源码：`-DMATRIX_CROW_SOURCE_DIR=/path/to/Crow`
-5. 系统已装 Crow 也想强制源码构建：`-DMATRIX_FORCE_FETCH_CROW=ON`
-
-示例：
-
-```bash
-# 允许联网下载 Crow
-cmake -S . -B build -DMATRIX_FETCH_CROW=ON
-
-# 使用本地 Crow 源码（离线）
-cmake -S . -B build \
-  -DMATRIX_FORCE_FETCH_CROW=ON \
-  -DMATRIX_CROW_SOURCE_DIR=/path/to/Crow
-
-# 不需要 Web GUI
-cmake -S . -B build -DMATRIX_ENABLE_WEBGUI=OFF
-```
-
----
-
-## 构建
+最简流程：
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-```
-
-产物是 `build/matrix`。推荐从 tty 或桌面会话里用仓库根目录的脚本启动：
-
-```bash
 ./launch
 ```
 
 不要用 `sudo` 运行；它需要当前用户的 Wayland / DRM 权限。
 
-## Arch系编译为tar.zst
-
-### 准备一个干净的打包目录
-```bash
-rm -rf /tmp/hm-pkg
-mkdir -p /tmp/hm-pkg
-cp distributions/arch/PKGBUILD \
-   distributions/arch/HackMatrix.desktop \
-   distributions/arch/matrix-script \
-   /tmp/hm-pkg/
-```
-   
-### 输出目录
-```bash
-mkdir -p "$HOME/HackMatrix-arch"
-
-cd /tmp/hm-pkg
-
-HACKMATRIX_LOCAL_SOURCE=<project_dir> \
-PKGDEST="$HOME/HackMatrix-arch" \
-MAKEFLAGS="-j$(nproc)" \
-makepkg -f
-```
-产物会直接出现在：
-~/HackMatrix-arch/hackmatrix-git-<版本>-x86_64.pkg.tar.zst
-
-#### 安装
-```bash
-sudo pacman -U "$HOME"/HackMatrix-arch/hackmatrix-git-*.pkg.tar.zst
-```
-
-几个注意点
-- 不要用 sudo makepkg，用当前用户跑，最后安装才用 sudo pacman -U。
-- HACKMATRIX_LOCAL_SOURCE 必须指向仓库根目录，不是 build/。
-- 想强制全量重编，加 -C：
-makepkg -f -C
-- 构建会重写 client_libs/python/hackMatrix/protos/api_pb2.py，如果不想让它出现在 git status 里：
-git checkout HEAD -- client_libs/python/hackMatrix/protos/api_pb2.py
-- 打包的是当前工作区，未提交的改动也会进包；版本号来自 git describe。
-- 包名固定是 hackmatrix-git，重复构建会覆盖/升级已安装的同名包。
-
-### 常用选项
-
-| 选项 | 默认 | 说明 |
-|---|---|---|
-| `MATRIX_USE_SYSTEM_WLROOTS` | `ON` | 使用系统 wlroots；`OFF` 编译 submodule |
-| `MATRIX_FORCE_BUILD_WLROOTS` | `OFF` | 即使系统有也强制编译 submodule |
-| `MATRIX_STRICT_WLROOTS_VERSION` | `OFF` | 版本不一致时直接报错 |
-| `MATRIX_BUILD_TESTS` | `ON` | 构建单元测试 |
-| `MATRIX_ENABLE_INTEGRATION_TESTS` | `OFF` | 注册需要真实会话的集成测试 |
-| `MATRIX_WARNINGS` | `ON` | 开启 `-Wall -Wextra` |
-| `MATRIX_NATIVE_ARCH` | `OFF` | 加 `-march=native`（不可跨机器分发） |
-| `MATRIX_SANITIZE` | 空 | 例如 `address,undefined` |
-| `MATRIX_ENABLE_WEBGUI` | `ON` | 找不到 Crow 时自动关闭 |
-| `MATRIX_FETCH_CROW` | `OFF` | 允许联网下载 Crow |
-| `MATRIX_CROW_SOURCE_DIR` | 空 | 使用本地 Crow 源码 |
-| `MATRIX_BUILD_EXAMPLES` | `OFF` | 构建 `voxel_demo` 等 API 示例 |
-
-### 测试（可选）
-
-```bash
-ctest --test-dir build --output-on-failure
-```
-
-集成测试需要真实 Wayland/DRM 会话和 `foot`：
-
-```bash
-cmake -S . -B build -DMATRIX_ENABLE_INTEGRATION_TESTS=ON
-ctest --test-dir build --output-on-failure -L integration
-```
-
-### Sanitizer（可选）
-
-```bash
-cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
-  -DMATRIX_SANITIZE=address,undefined
-cmake --build build-asan -j"$(nproc)"
-ASAN_OPTIONS=detect_container_overflow=0 ctest --test-dir build-asan --output-on-failure
-```
-
 ---
-
-## 运行
-建议在tty环境运行，可执行文件在项目的根目录
-运行 `./launch` 
-如果你在AUR安装了HarkMartix，可以直接执行hackmartix运行（但是我还没有AUR账户，所以晚些才能上传到AUR）
-
-```bash
-hackmatrix
-```
----
-
-## 专用服务器（Beta）构建
-```bash
-cd <project_dir>
-
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMATRIX_BUILD_EXAMPLES=ON
-cmake --build build -j"$(nproc)" --target matrix matrix-server voxel_demo
-```
-
-### 运行
-用一份数据库副本，避免服务器和客户端互相写 db/matrix.db：
-```bash
-cp db/matrix.db /tmp/hackmatrix-server.db
-./build/matrix-server --port 7777 --db /tmp/hackmatrix-server.db
-```
 
 ## 后续计划
 

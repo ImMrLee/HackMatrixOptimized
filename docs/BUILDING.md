@@ -1,83 +1,259 @@
 # 构建 HackMatrix
 
+> 本文是 HackMatrix **构建、打包、运行与测试**的唯一说明。`readme.md` 只保留快速开始和本文链接。
+
 ## 快速开始
+
+依赖安装完成后：
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-./build/matrix            # 完整会话环境也可运行 ./launch
+./launch
 ```
 
-依赖安装完成后，在普通现代机器上，配置通常不到一秒即可完成；完整构建约需一分钟。
+在普通现代机器上，配置通常不到一秒；完整构建约需一分钟。产物在 `build/matrix`。
 
 ## 依赖
 
-所有依赖都通过 `pkg-config` 和 CMake 查找。在 Arch Linux 上可以运行：
+### 构建依赖
 
-```bash
-sudo pacman -S --needed base-devel cmake git protobuf wayland wayland-protocols \
-  libdrm libxkbcommon pixman mesa libglvnd lcms2 systemd-libs seatd \
-  libdisplay-info libliftoff libinput libxcb xcb-util-errors xcb-util-wm \
-  xcb-util-renderutil assimp fmt spdlog sqlite zeromq ffmpeg \
-  gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
-  libnice gtest
-```
+- CMake、pkg-config、C/C++ 编译器（`base-devel` / `build-essential`）
+- `wayland`、`wayland-protocols`
+- **wlroots 0.19**（优先系统包；没有则用仓库 submodule，需要 `meson` + `ninja`）
+- wlroots X11 后端 / XWayland 所需 XCB 库
+- ZeroMQ（`libzmq`）
+- Protocol Buffers（`libprotobuf` + `protoc`，两者版本必须一致）
+- `spdlog`、`fmt`
+- EGL、OpenGL ES 2
+- `assimp`
+- `sqlite3`
+- `pixman`、`libdrm`、`libxkbcommon`（通常由 wlroots 带出，建议显式安装）
+
+### 窗口共享 / WebRTC 依赖
 
 窗口共享使用 GStreamer 的 `webrtcbin`：
 
-- `gst-plugins-bad` 提供 `webrtcbin` 和 `h264parse`
-- `gst-plugins-good` 提供 `rtpbin` 和 `rtph264pay`
-- `gst-libav` 提供 `avdec_h264`
-- `libnice` 提供 ICE 支持
+- `gst-plugins-bad`：`webrtcbin`、`h264parse`
+- `gst-plugins-good`：`rtpbin`、`rtph264pay`
+- `gst-libav`：`avdec_h264`
+- `libnice`：ICE 支持
+- `ffmpeg`：软件编码/回退路径
 
-不同发行版之间最主要的差异是 `wlroots`：
+### 运行时依赖
 
-- **首选：**系统软件包（`wlroots-0.19`；Arch Linux 软件包名为 `wlroots0.19`）。CMake 会自动检测其 `pkg-config` 文件。
-  - Arch 官方仓库的 `[extra]` 现在提供 `wlroots0.20`，而 `wlroots0.19` 只能通过 AUR 安装。构建 Arch 软件包前，请使用 `yay -S wlroots0.19` 或 `paru -S wlroots0.19` 安装。
-  - `makepkg` 本身无法解析 AUR 依赖。
-- **后备方案：**没有系统软件包时，CMake 会使用 Meson/Ninja 构建仓库自带的 `wlroots/` 子模块。此方案需要安装 `meson` 和 `ninja`。
-  - 子模块固定在与发行版软件包相同的 0.19.x 系列，以确保私有头文件和实际链接的库一致。
-  - 当版本不一致时，CMake 会发出警告；设置 `MATRIX_STRICT_WLROOTS_VERSION=ON` 后会直接失败。项目会读取私有结构体字段，而这些字段偏移不保证跨 ABI 稳定。
-  - 此后备方案适用于直接使用 CMake 构建；`distributions/arch/PKGBUILD`仍要求 `wlroots0.19`，以确保打包后的可执行文件使用同版本运行库。
+- `wofi`：默认应用菜单（可在 `config.yaml` 的 `menu_program` 修改）
+- `xorg-xwayland` / `xwayland`：运行 X11 程序时需要
+- 一个可用的 Wayland 会话或 DRM 设备；仓库根目录的 `./launch` 会处理
 
-Crow（可选的多人 Web GUI 使用）通过 `find_package` 查找，项目不会隐式下载它。
+### 可选依赖
+
+- Crow：多人 Web GUI（`MATRIX_ENABLE_WEBGUI`，默认 ON，找不到 Crow 会自动关闭）
+- GTest：单元测试（`MATRIX_BUILD_TESTS`，默认 ON）
+- `meson` + `ninja`：只在使用 bundled wlroots 时需要
+
+> `pthread` 属于 glibc，无需单独安装。`glm`、ImGui、EnTT、Tracy、ENet 等已随仓库提供。
+
+### 发行版安装命令
+
+> 以下包名以各发行版当前仓库为准。若某个 GStreamer 插件包不存在，安装提供 `webrtcbin` / `h264parse` 的对应插件即可。
+
+#### Arch Linux
+
+```bash
+# 先安装 AUR 的 wlroots 0.19（官方 [extra] 现在提供的是 0.20）
+yay -S wlroots0.19     # 或 paru -S wlroots0.19
+
+sudo pacman -S --needed base-devel cmake git pkgconf \
+  wayland wayland-protocols \
+  libxcb xcb-util-errors xcb-util-wm xcb-util-renderutil \
+  protobuf zeromq spdlog fmt mesa libglvnd lcms2 systemd-libs seatd \
+  assimp sqlite libdrm pixman libxkbcommon libinput libdisplay-info libliftoff \
+  ffmpeg gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
+  gst-libav libnice gtest \
+  wofi xorg-xwayland
+```
+
+也可以直接用仓库里的 `distributions/arch/PKGBUILD` 打包（见下文“打包（Arch Linux）”）。`makepkg` 本身无法解析 AUR 依赖，所以仍需先装 `wlroots0.19`。
+
+#### Ubuntu / Debian
+
+参考：[在 Debian/Ubuntu 构建](debianBUILDING.md)。
+
+#### Fedora / CentOS
+
+```bash
+sudo dnf install cmake git pkgconf-pkg-config @development-tools \
+  wayland-devel wayland-protocols-devel wlroots-devel \
+  libxcb-devel xcb-util-errors-devel xcb-util-wm-devel xcb-util-renderutil-devel \
+  zeromq-devel protobuf-devel protobuf-compiler \
+  spdlog-devel fmt-devel mesa-libEGL-devel mesa-libGLES-devel \
+  assimp-devel sqlite-devel pixman-devel libdrm-devel libxkbcommon-devel \
+  ffmpeg-devel gstreamer1-devel gstreamer1-plugins-base-devel \
+  gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-libav \
+  libnice-devel gtest-devel \
+  wofi xorg-x11-server-Xwayland
+```
+
+> `wlroots-devel` 必须是 0.19；版本不符时用 submodule 方式。
+
+#### Gentoo
+
+```bash
+sudo emerge --autounmask-write \
+  dev-build/cmake dev-vcs/git dev-util/pkgconf \
+  dev-libs/wayland dev-libs/wayland-protocols gui-libs/wlroots \
+  x11-libs/libxcb x11-libs/xcb-util-errors x11-libs/xcb-util-wm \
+  x11-libs/xcb-util-renderutil net-libs/zeromq dev-libs/protobuf \
+  dev-libs/spdlog dev-libs/libfmt media-libs/mesa dev-db/sqlite \
+  media-libs/assimp x11-libs/pixman x11-libs/libdrm x11-libs/libxkbcommon \
+  media-video/ffmpeg media-libs/gstreamer media-libs/gst-plugins-base \
+  media-libs/gst-plugins-good media-libs/gst-plugins-bad media-libs/gst-libav \
+  net-libs/libnice dev-cpp/gtest \
+  gui-apps/wofi x11-base/xwayland
+```
+
+> USE flag 和 mask 需要按自己的系统处理；`gui-libs/wlroots` 必须是 0.19。
+
+## wlroots
+
+默认使用系统 wlroots：
+
+```bash
+cmake -S . -B build
+```
+
+没有系统 0.19 时，初始化 submodule 并让 CMake 编译它：
+
+```bash
+git submodule update --init --recursive
+cmake -S . -B build -DMATRIX_USE_SYSTEM_WLROOTS=OFF
+```
+
+- 需要 `meson` 和 `ninja`
+- submodule 固定为 **0.19.3**
+- 系统版本与 submodule 不一致时默认只警告；加 `-DMATRIX_STRICT_WLROOTS_VERSION=ON` 可改为直接报错
+- 也可用 `-DMATRIX_FORCE_BUILD_WLROOTS=ON`，即使系统有也强制编译 submodule
+- 项目会读取 wlroots 私有结构体字段，这些偏移不保证跨 ABI 稳定，因此不建议混用不同小版本
+
+## Crow（可选，多人 Web GUI）
+
+默认流程：
+
+1. `find_package(Crow)` 找系统包
+2. 找不到 → **不会联网下载**，自动关闭 `MATRIX_ENABLE_WEBGUI` 并给出警告
+3. 需要联网下载：`-DMATRIX_FETCH_CROW=ON`（固定 revision `c61a26e`）
+4. 离线/本地源码：`-DMATRIX_CROW_SOURCE_DIR=/path/to/Crow`
+5. 系统已装 Crow 也想强制源码构建：`-DMATRIX_FORCE_FETCH_CROW=ON`
+
+示例：
+
+```bash
+# 允许联网下载 Crow
+cmake -S . -B build -DMATRIX_FETCH_CROW=ON
+
+# 使用本地 Crow 源码（离线）
+cmake -S . -B build \
+  -DMATRIX_FORCE_FETCH_CROW=ON \
+  -DMATRIX_CROW_SOURCE_DIR=/path/to/Crow
+
+# 不需要 Web GUI
+cmake -S . -B build -DMATRIX_ENABLE_WEBGUI=OFF
+```
+
+## 配置与构建
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMATRIX_BUILD_EXAMPLES=ON
+cmake --build build -j"$(nproc)"
+```
+
+可按需指定 target：
+
+```bash
+cmake --build build -j"$(nproc)" --target matrix
+cmake --build build -j"$(nproc)" --target matrix-server
+cmake --build build -j"$(nproc)" --target matrix_unit_tests
+cmake --build build -j"$(nproc)" --target voxel_demo   # 需要 MATRIX_BUILD_EXAMPLES=ON
+```
+
+构建产物：
+
+| 产物 | 说明 |
+|---|---|
+| `build/matrix` | 主程序（合成器 + 3D 桌面） |
+| `build/matrix-server` | 无头专用服务器（`MATRIX_BUILD_SERVER=ON`，默认开启） |
+| `build/matrix_unit_tests` | 单元测试 |
+| `build/voxel_demo` | API 示例（`MATRIX_BUILD_EXAMPLES=ON`） |
 
 ## 构建选项
 
-| 选项 | 默认值 | 用途 |
+| 选项 | 默认 | 说明 |
 |---|---|---|
-| `MATRIX_USE_SYSTEM_WLROOTS` | `ON` | 系统中存在 wlroots 时优先使用；设为 `OFF` 时强制构建子模块 |
-| `MATRIX_STRICT_WLROOTS_VERSION` | `OFF` | 系统 wlroots 与子模块版本不一致时失败，而不是只发出警告 |
-| `MATRIX_BUILD_TESTS` | `ON` | 构建 GTest 测试套件 |
-| `MATRIX_ENABLE_INTEGRATION_TESTS` | `OFF` | 向 CTest 注册需要启动合成器的集成测试 |
-| `MATRIX_WARNINGS` | `ON` | 为项目目标添加 `-Wall -Wextra` |
-| `MATRIX_NATIVE_ARCH` | `OFF` | 添加 `-march=native`（不能跨 CPU 架构通用） |
-| `MATRIX_SANITIZE` | （空） | 逗号分隔的 Sanitizer，例如 `address,undefined` |
-| `MATRIX_ENABLE_WEBGUI` | `ON` | 构建多人 Web GUI（需要 Crow） |
-| `MATRIX_FETCH_CROW` | `OFF` | 找不到系统软件包时允许下载 Crow |
-| `MATRIX_CROW_SOURCE_DIR` | （空） | 使用本地 Crow 检出目录，而不下载 |
+| `MATRIX_USE_SYSTEM_WLROOTS` | `ON` | 使用系统 wlroots；`OFF` 编译 submodule |
+| `MATRIX_FORCE_BUILD_WLROOTS` | `OFF` | 即使系统有也强制编译 submodule |
+| `MATRIX_STRICT_WLROOTS_VERSION` | `OFF` | 版本不一致时直接报错 |
+| `MATRIX_BUILD_TESTS` | `ON` | 构建单元测试 |
+| `MATRIX_ENABLE_INTEGRATION_TESTS` | `OFF` | 注册需要真实会话的集成测试 |
+| `MATRIX_WARNINGS` | `ON` | 开启 `-Wall -Wextra` |
+| `MATRIX_NATIVE_ARCH` | `OFF` | 加 `-march=native`（不可跨机器分发） |
+| `MATRIX_SANITIZE` | 空 | 例如 `address,undefined` |
+| `MATRIX_ENABLE_WEBGUI` | `ON` | 多人 Web GUI（找不到 Crow 时自动关闭） |
+| `MATRIX_FETCH_CROW` | `OFF` | 允许联网下载 Crow |
+| `MATRIX_FORCE_FETCH_CROW` | `OFF` | 系统有 Crow 也强制源码构建 |
+| `MATRIX_CROW_SOURCE_DIR` | 空 | 使用本地 Crow 源码 |
+| `MATRIX_BUILD_SERVER` | `ON` | 构建独立 `matrix-server` |
+| `MATRIX_BUILD_EXAMPLES` | `OFF` | 构建 `voxel_demo` 等 API 示例 |
 
-现在的 `CMAKE_BUILD_TYPE=Debug` 确实会使用 `-O0`；此前硬编码的 `-O3` 会导致 Debug 与 Release 实际上没有区别。Release 保持原有行为，即 `-O3 -g`，并加上 CMake 在 `CMAKE_CXX_FLAGS_RELEASE` 中生成的 `-DNDEBUG`。
+`CMAKE_BUILD_TYPE=Debug` 使用 `-O0`；Release 为 `-O3 -g`，并带 `-DNDEBUG`。
 
-## Sanitizer
+## 运行
 
-```bash
-cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
-  -DMATRIX_SANITIZE=address,undefined
-cmake --build build-asan -j"$(nproc)"
-ctest --test-dir build-asan --output-on-failure   # CTest 会设置所需环境变量
-```
-
-当前构建系统自动处理两项工具链限制：
-
-1. **不对 protobuf 生成代码进行检测。**若对生成的 `api.pb.cc` 启用 ASan，来自 `libprotobuf` 的虚函数调用会跳转到无效地址（GCC 16 与 Clang 均已复现）。CMake 会只为该翻译单元添加 `-fno-sanitize=…`，其余代码仍完整使用 Sanitizer。
-2. **测试中关闭容器溢出检测。**系统中的 `libprotobuf` 未使用 Sanitizer 编译，因此可能向 ASan 标记为中毒的 `std::string` 容量写入数据，从而产生误报。CTest 会设置 `ASAN_OPTIONS=detect_container_overflow=0`。
-
-手动运行二进制时应传入相同选项：
+推荐从 tty 或桌面会话里用仓库根目录的脚本启动：
 
 ```bash
-ASAN_OPTIONS=detect_container_overflow=0 ./build-asan/matrix_unit_tests
+./launch
 ```
+
+- 默认使用 `./build/matrix`，可用 `MATRIX_WLROOTS_BIN=/path/to/matrix` 覆盖
+- 自动选择 `wayland` / `x11` 后端；没有可用会话时用 `--drm` 或 `--headless`
+- 会处理 `XDG_RUNTIME_DIR`、`WLR_BACKENDS`、光标主题等环境
+- **不要用 `sudo`**：它需要当前用户的 Wayland / DRM 权限
+
+强制后端：
+
+```bash
+./launch --headless     # wlroots headless 后端（TTY/无头验证）
+./launch --drm          # 直接作为 DRM 合成器运行
+./launch --x11          # 嵌套在 X11 会话里
+```
+
+无头日志 / 截图：
+
+```bash
+MATRIX_WLROOTS_OUTPUT=/tmp/matrix-controls.log \
+HACKMATRIX_SCREENSHOT_AFTER_MS=5000 \
+./launch --headless
+```
+
+`MATRIX_WLROOTS_OUTPUT` 是控制/调试日志路径（默认 `/tmp/matrix-wlroots-output.log`），不是输出文件；截图仍写到 `screenshots/`。
+
+配置文件默认在 `$XDG_CONFIG_HOME/HackMatrix`（通常是 `~/.config/HackMatrix`），可用 `HACKMATRIX_CONFIG_HOME` 覆盖。
+
+### 专用服务器（Beta）
+
+用一份数据库副本，避免服务器和客户端互相写 `db/matrix.db`：
+
+```bash
+cp db/matrix.db /tmp/hackmatrix-server.db
+./build/matrix-server --port 1234 --db /tmp/hackmatrix-server.db
+```
+
+- `--port`：ENet 客户端使用的 UDP 端口，默认 `1234`
+- `--db`：场景数据库，默认 `db/matrix.db`
+- 服务器使用 ENet UDP，跨机器联机时需要放行防火墙，例如 `sudo ufw allow 1234/udp`
+- Web GUI 端口由 `MULTIPLAYER_WEBGUI_PORT` 控制（`./launch` 默认注入 `7777`；直接运行 `build/matrix` 时回退 `7775`）
+- API 绑定由 `VOXEL_API_BIND` 控制（`./launch` 默认 `tcp://*:3345`；直接运行 `build/matrix` 时默认 `tcp://*:4455`）
 
 ## 测试
 
@@ -90,11 +266,82 @@ cmake -S . -B build -DMATRIX_ENABLE_INTEGRATION_TESTS=ON
 ctest --test-dir build --output-on-failure -L integration
 ```
 
-测试框架的详细信息请参阅 `tests/TESTING.md`。
+也可以直接运行 `./build/matrix_unit_tests`。测试框架细节见 `tests/TESTING.md`。
+
+## Sanitizer
+
+```bash
+cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
+  -DMATRIX_SANITIZE=address,undefined
+cmake --build build-asan -j"$(nproc)"
+ctest --test-dir build-asan --output-on-failure   # CTest 会设置所需环境变量
+```
+
+当前构建系统自动处理两项工具链限制：
+
+1. **不对 protobuf 生成代码进行检测。** 若对生成的 `api.pb.cc` 启用 ASan，来自 `libprotobuf` 的虚函数调用会跳转到无效地址（GCC 16 与 Clang 均已复现）。CMake 会只为该翻译单元添加 `-fno-sanitize=…`，其余代码仍完整使用 Sanitizer。
+2. **测试中关闭容器溢出检测。** 系统中的 `libprotobuf` 未使用 Sanitizer 编译，因此可能向 ASan 标记为中毒的 `std::string` 容量写入数据，从而产生误报。CTest 会设置 `ASAN_OPTIONS=detect_container_overflow=0`。
+
+手动运行二进制时应传入相同选项：
+
+```bash
+ASAN_OPTIONS=detect_container_overflow=0 ./build-asan/matrix_unit_tests
+```
+
+## 打包（Arch Linux）
+
+### 准备一个干净的打包目录
+
+```bash
+rm -rf /tmp/hm-pkg
+mkdir -p /tmp/hm-pkg
+cp distributions/arch/PKGBUILD \
+   distributions/arch/HackMatrix.desktop \
+   distributions/arch/matrix-script \
+   /tmp/hm-pkg/
+```
+
+### 输出目录
+
+```bash
+mkdir -p "$HOME/HackMatrix-arch"
+
+cd /tmp/hm-pkg
+
+HACKMATRIX_LOCAL_SOURCE=<project_dir> \
+PKGDEST="$HOME/HackMatrix-arch" \
+MAKEFLAGS="-j$(nproc)" \
+makepkg -f
+```
+
+产物会直接出现在：
+
+```text
+~/HackMatrix-arch/hackmatrix-git-<版本>-x86_64.pkg.tar.zst
+```
+
+### 安装
+
+```bash
+sudo pacman -U "$HOME"/HackMatrix-arch/hackmatrix-git-*.pkg.tar.zst
+```
+
+### 注意点
+
+- 不要用 `sudo makepkg`，用当前用户跑，最后安装才用 `sudo pacman -U`。
+- `HACKMATRIX_LOCAL_SOURCE` 必须指向仓库根目录，不是 `build/`。
+- 想强制全量重编，加 `-C`：`makepkg -f -C`。
+- 先安装 AUR 的 `wlroots0.19`；`makepkg` 本身无法解析 AUR 依赖。
+- 构建会重写 `client_libs/python/hackMatrix/protos/api_pb2.py`，如果不想让它出现在 `git status` 里：
+  ```bash
+  git checkout HEAD -- client_libs/python/hackMatrix/protos/api_pb2.py
+  ```
+- 打包的是当前工作区，未提交的改动也会进包；版本号来自 `git describe`。
+- 包名固定是 `hackmatrix-git`，重复构建会覆盖/升级已安装的同名包。
 
 ## 调试覆盖层（ImGui）
 
-合成器会绘制一个名为 HackMatrix 的调试窗口，其中包含 FPS、调试日志、实体编辑器和多人游戏控件。该覆盖层默认启用。
+合成器会绘制一个名为 HackMatrix 的调试窗口，包含 FPS、调试日志、实体编辑器和多人游戏控件。该覆盖层默认启用。
 
 | 环境变量 | 作用 |
 |---|---|
@@ -106,12 +353,14 @@ ctest --test-dir build --output-on-failure -L integration
 | `HACKMATRIX_DEBUG_MULTIPLAYER_CONNECT=host:port` | 自动连接多人面板一次（无头 UI 测试） |
 | `HACKMATRIX_DEBUG_FOCUS_NEW_WINDOW=1` | 锁定每个新顶层窗口及其输入（默认只有按 `R` 才锁定窗口） |
 | `HACKMATRIX_DEBUG_PREVIEW_FIRST_WINDOW=1` | 为第一个窗口创建本地回环预览（无头 UI 测试） |
-| `HACKMATRIX_DEBUG_SHARE_FIRST_WINDOW=1` | 场景可用后发布第一个窗口（用于匹配的对等端或专用服务器，无头测试） |
+| `HACKMATRIX_DEBUG_SHARE_FIRST_WINDOW=1` | 场景可用后发布第一个窗口（无头测试） |
 | `HACKMATRIX_DEBUG_ALLOW_CONTROL_FIRST_WINDOW=1` | 同时允许控制自动共享的窗口（无头测试） |
 | `HACKMATRIX_DEBUG_TAKE_CONTROL_FIRST_REMOTE=1` | 请求控制第一个可用的远程窗口（无头测试） |
+| `HACKMATRIX_DEBUG_SEND_POINTER_AFTER_CONTROL=1` | 获得控制权后发送一次指针事件（无头测试） |
 | `HACKMATRIX_DEBUG_SEND_KEY_AFTER_CONTROL=1` | 获得控制权后发送一次 `KEY_A`（无头测试） |
+| `HACKMATRIX_DEBUG_WINDOW_RESIZE=边,dx,dy` | 在按 `G` 时强制对瞄准窗口做一次缩放（无头测试，例如 `R,300,0`） |
 
-覆盖层会与场景共用同一个 GL 上下文和帧缓冲，并从 wlroots 输出渲染回调中绘制。鼠标输入通过 Wayland 指针处理器转发；当覆盖层需要鼠标时，点击会被消耗，不会继续传递给游戏控制或客户端。键盘文本输入暂未转发给 ImGui，因此文本框目前只读。
+覆盖层会与场景共用同一个 GL 上下文和帧缓冲，并从 wlroots 输出渲染回调中绘制。鼠标输入通过 Wayland 指针处理器转发；当覆盖层需要鼠标时，点击会被消耗，不会继续传递给游戏控制或客户端。键盘输入通过 `Engine::updateImGuiKey` 转发，实体编辑器的文本输入框可用；但覆盖层不是 Wayland 文本输入客户端，文本字段目前只支持 ASCII（中文输入见下一节）。
 
 ## 中文输入（fcitx5）
 
@@ -166,3 +415,14 @@ HackMatrix 宣告支持以下协议：
 1. 每个依赖都首先尝试使用 `find_package` 查找。
 2. 只有在设置 `MATRIX_FETCH_CROW=ON` 时才会访问网络下载 Crow。
 3. 只有找不到系统 wlroots 软件包时才构建 wlroots 子模块。
+
+## 故障排查
+
+| 现象 | 处理 |
+|---|---|
+| 找不到 / 版本不符的 wlroots | 安装 0.19（Arch 用 AUR `wlroots0.19`），或 `-DMATRIX_USE_SYSTEM_WLROOTS=OFF` 编译 submodule |
+| `protoc` 与 `libprotobuf` 版本不一致 | 两者必须来自同一版本；按报错安装匹配的 `protobuf` / `protobuf-compiler` |
+| Web GUI 被自动关闭 | 安装 Crow，或 `-DMATRIX_FETCH_CROW=ON`，或 `-DMATRIX_CROW_SOURCE_DIR=...` |
+| 启动报 Wayland / DRM 权限错误 | 不要用 `sudo`；确认在 Wayland 会话或 tty 中，且当前用户可访问 `/dev/dri/*` |
+| 多人连不上 | 检查 UDP 端口（默认 1234）和防火墙，例如 `sudo ufw allow 1234/udp` |
+| 服务器和客户端互相写库 | 给 `matrix-server` 使用独立的 `--db` 副本 |
