@@ -625,10 +625,15 @@ Controls::beginWindowResize(const WindowManager::AppRayHit& hit)
   const glm::quat rotation = glm::quat(glm::radians(positionable->rotate));
   resizeRightAxis = glm::normalize(rotation * glm::vec3(1.0f, 0.0f, 0.0f));
   resizeUpAxis = glm::normalize(rotation * glm::vec3(0.0f, 1.0f, 0.0f));
+  // The in-world quad is 1.0 wide and (SCREEN_HEIGHT/SCREEN_WIDTH) tall before
+  // heightScalar, so world width = scale and world height =
+  // (SCREEN_HEIGHT/SCREEN_WIDTH) * scale * heightScalar.y.
+  const float standardRatio = SCREEN_HEIGHT / SCREEN_WIDTH;
   resizeW0 = positionable->scale;
-  resizeH0 = positionable->scale * comp->app->heightScalar[1][1];
-  if (resizeH0 <= 0.0f) {
-    resizeH0 = resizeW0;
+  resizeH0 = standardRatio * positionable->scale *
+             comp->app->heightScalar[1][1];
+  if (resizeH0 <= 0.0f || !std::isfinite(resizeH0)) {
+    resizeH0 = resizeW0 * standardRatio;
   }
   resizePos0 = positionable->pos;
   resizePixelW0 = width;
@@ -717,10 +722,13 @@ Controls::handleWindowResizeDelta(double dx, double dy)
   }
   positionable->pos = resizePos0 + shift;
   positionable->scale = newW;
-  // World width is `scale`; the in-world height is scale * heightScalar.y.
-  // Drive the preview aspect so the dragged edges track the mouse.
-  comp->app->heightScalar =
-    glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, newH / newW, 1.0f));
+  // World width is `scale`; world height is
+  // (SCREEN_HEIGHT/SCREEN_WIDTH) * scale * heightScalar.y. Solve heightScalar.y
+  // so the previewed world aspect equals newH/newW.
+  const float standardRatio = SCREEN_HEIGHT / SCREEN_WIDTH;
+  comp->app->heightScalar = glm::scale(
+    glm::mat4(1.0f),
+    glm::vec3(1.0f, newH / (standardRatio * newW), 1.0f));
   positionable->damage();
   return true;
 }
@@ -741,13 +749,17 @@ Controls::endWindowResize()
   if (!positionable || !comp || !comp->app) {
     return;
   }
+  const float standardRatio = SCREEN_HEIGHT / SCREEN_WIDTH;
   const float worldW = std::max(1e-3f, positionable->scale);
-  const float aspect =
-    std::clamp(comp->app->heightScalar[1][1], 0.05f, 20.0f);
+  // World aspect (height / width) = standardRatio * heightScalar.y, which is
+  // also the pixel aspect the client should be configured to.
+  const float worldAspect = std::clamp(
+    standardRatio * comp->app->heightScalar[1][1], 0.05f, 20.0f);
   const float worldScaleX = worldW / std::max(1e-3f, resizeW0);
   int pixelW = static_cast<int>(
     std::lround(static_cast<float>(resizePixelW0) * worldScaleX));
-  int pixelH = static_cast<int>(std::lround(static_cast<float>(pixelW) * aspect));
+  int pixelH = static_cast<int>(
+    std::lround(static_cast<float>(pixelW) * worldAspect));
   pixelW = std::clamp(pixelW, 64, 8192);
   pixelH = std::clamp(pixelH, 64, 8192);
   // Update local geometry now; ask the client for the real configure. The
