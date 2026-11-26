@@ -511,8 +511,16 @@ Controls::handleWindowMoveKey()
   const bool held = isPressedEither(XKB_KEY_g, XKB_KEY_G);
   if (!held) {
     windowMoveNoHitLogged = false;
+    debugResizeFired = false;
     if (windowMoveEntity != entt::null) {
       endWindowMove();
+    }
+    return;
+  }
+  if (std::getenv("HACKMATRIX_DEBUG_WINDOW_RESIZE")) {
+    if (!debugResizeFired) {
+      debugResizeFired = true;
+      debugResizeOnce();
     }
     return;
   }
@@ -567,7 +575,6 @@ Controls::beginWindowMove(entt::entity entity, float distance)
   windowMoveDistance =
     distance > 0.0f ? distance
                     : glm::length(positionable.pos - camera->position);
-  windowMoveDeltaLogged = false;
   log_controls("controls: window move begin ent=%d dist=%.3f pos=(%.3f,%.3f,%.3f) scale=%.3f\n",
                (int)entt::to_integral(entity),
                static_cast<double>(windowMoveDistance),
@@ -575,74 +582,39 @@ Controls::beginWindowMove(entt::entity entity, float distance)
                static_cast<double>(positionable.pos.y),
                static_cast<double>(positionable.pos.z),
                static_cast<double>(positionable.scale));
-  // Headless verification hook: apply a fixed one-shot delta on grab.
-  if (const char* dragTest = std::getenv("HACKMATRIX_DEBUG_WINDOW_DRAG")) {
-    double dx = 0.0;
-    double dy = 0.0;
-    if (std::sscanf(dragTest, "%lf,%lf", &dx, &dy) == 2) {
-      handleWindowMoveDelta(dx, dy);
-    }
-  }
   return true;
 }
 
-bool
-Controls::handleWindowMoveDelta(double dx, double dy)
+void
+Controls::updateHeldWindowPose()
 {
   if (windowMoveEntity == entt::null || !registry || !camera) {
-    return false;
+    return;
   }
   if (!registry->valid(windowMoveEntity)) {
     windowMoveEntity = entt::null;
-    return false;
+    return;
   }
   auto* positionable = registry->try_get<Positionable>(windowMoveEntity);
   if (!positionable) {
     windowMoveEntity = entt::null;
-    return false;
+    return;
   }
-  glm::vec3 right;
-  glm::vec3 up;
-  if (!cameraScreenAxes(right, up)) {
-    if (!windowMoveDeltaLogged) {
-      log_controls("controls: window move delta: camera axes failed\n");
-    }
-    return false;
-  }
-  const float ppu = worldPerPixelAt(windowMoveDistance);
-  if (!std::isfinite(ppu) || ppu <= 0.0f) {
-    if (!windowMoveDeltaLogged) {
-      const glm::mat4 proj = camera->getProjectionMatrix(true);
-      log_controls(
-        "controls: window move delta: bad ppu=%.6f screenH=%.1f p11=%.6f "
-        "dist=%.3f\n",
-        static_cast<double>(ppu),
-        static_cast<double>(SCREEN_HEIGHT),
-        static_cast<double>(proj[1][1]),
-        static_cast<double>(windowMoveDistance));
-    }
-    return false;
-  }
-  const glm::vec3 before = positionable->pos;
-  positionable->pos += right * (static_cast<float>(dx) * ppu);
-  positionable->pos += up * (static_cast<float>(-dy) * ppu);
-  positionable->damage();
-  if (!windowMoveDeltaLogged) {
-    windowMoveDeltaLogged = true;
-    log_controls(
-      "controls: window move delta dx=%.3f dy=%.3f ppu=%.6f "
-      "before=(%.3f,%.3f,%.3f) after=(%.3f,%.3f,%.3f)\n",
-      dx,
-      dy,
-      static_cast<double>(ppu),
-      static_cast<double>(before.x),
-      static_cast<double>(before.y),
-      static_cast<double>(before.z),
-      static_cast<double>(positionable->pos.x),
-      static_cast<double>(positionable->pos.y),
-      static_cast<double>(positionable->pos.z));
-  }
-  return true;
+  // Reuse the spawn orientation: the window's local -Z maps to the camera's
+  // look direction, so it always faces the camera. Recompute every frame so it
+  // follows mouse-look and WASD player movement.
+  const float yaw = camera->getYaw();
+  const float pitch = camera->getPitch();
+  const glm::quat yawRotation =
+    glm::angleAxis(glm::radians(90.0f + yaw), glm::vec3(0.0f, -1.0f, 0.0f));
+  const glm::quat pitchRotation =
+    glm::angleAxis(glm::radians(pitch), glm::vec3(1.0f, 0.0f, 0.0f));
+  const glm::quat finalRotation = yawRotation * pitchRotation;
+  positionable->rotate = glm::degrees(glm::eulerAngles(finalRotation));
+  positionable->pos =
+    camera->position + finalRotation * glm::vec3(0.0f, 0.0f, -windowMoveDistance);
+  // Apply immediately so this frame renders the carried pose.
+  positionable->update();
 }
 
 void
@@ -651,8 +623,20 @@ Controls::endWindowMove()
   if (windowMoveEntity == entt::null) {
     return;
   }
-  log_controls("controls: window move commit ent=%d\n",
-               (int)entt::to_integral(windowMoveEntity));
+  if (registry && registry->valid(windowMoveEntity)) {
+    if (auto* positionable = registry->try_get<Positionable>(windowMoveEntity)) {
+      log_controls(
+        "controls: window move commit ent=%d pos=(%.3f,%.3f,%.3f) "
+        "rot=(%.1f,%.1f,%.1f)\n",
+        (int)entt::to_integral(windowMoveEntity),
+        static_cast<double>(positionable->pos.x),
+        static_cast<double>(positionable->pos.y),
+        static_cast<double>(positionable->pos.z),
+        static_cast<double>(positionable->rotate.x),
+        static_cast<double>(positionable->rotate.y),
+        static_cast<double>(positionable->rotate.z));
+    }
+  }
   windowMoveEntity = entt::null;
 }
 
@@ -720,6 +704,11 @@ Controls::beginWindowResize(const WindowManager::AppRayHit& hit)
   }
   resizePos0 = positionable->pos;
   resizePixelW0 = width;
+  resizeAccumW = 0.0f;
+  resizeAccumH = 0.0f;
+  lastResizeRequestTime = 0.0;
+  lastResizePixelW = -1;
+  lastResizePixelH = -1;
   resizeDistance = glm::length(positionable->pos - camera->position);
   resizeLeft = left;
   resizeRight = right;
@@ -769,24 +758,24 @@ Controls::handleWindowResizeDelta(double dx, double dy)
   const float dr = glm::dot(worldDelta, resizeRightAxis);
   const float du = glm::dot(worldDelta, resizeUpAxis);
 
-  float newW = resizeW0;
+  // Integrate the per-frame mouse delta. Recomputing the target from this
+  // frame's delta alone would snap back to the original size every frame.
   if (resizeRight) {
-    newW += dr;
+    resizeAccumW += dr;
   }
   if (resizeLeft) {
-    newW -= dr;
+    resizeAccumW -= dr;
   }
-  float newH = resizeH0;
   if (resizeTop) {
-    newH += du;
+    resizeAccumH += du;
   }
   if (resizeBottom) {
-    newH -= du;
+    resizeAccumH -= du;
   }
   constexpr float kMinWorld = 0.12f;
   constexpr float kMaxWorld = 60.0f;
-  newW = std::clamp(newW, kMinWorld, kMaxWorld);
-  newH = std::clamp(newH, kMinWorld, kMaxWorld);
+  float newW = std::clamp(resizeW0 + resizeAccumW, kMinWorld, kMaxWorld);
+  float newH = std::clamp(resizeH0 + resizeAccumH, kMinWorld, kMaxWorld);
 
   // Anchor the opposite edge: shift the centre by half the size delta.
   const float dW = newW - resizeW0;
@@ -813,7 +802,28 @@ Controls::handleWindowResizeDelta(double dx, double dy)
   comp->app->heightScalar = glm::scale(
     glm::mat4(1.0f),
     glm::vec3(1.0f, newH / (standardRatio * newW), 1.0f));
-  positionable->damage();
+  positionable->update();
+
+  // Ask the client for the real surface size while dragging, so this is an
+  // actual resize instead of only a stretched texture. Throttled to ~20 Hz and
+  // only when the target size changed.
+  const double now = nowSeconds();
+  if (now - lastResizeRequestTime >= 0.05) {
+    const float worldScaleX = newW / std::max(1e-3f, resizeW0);
+    int pixelW = static_cast<int>(
+      std::lround(static_cast<float>(resizePixelW0) * worldScaleX));
+    int pixelH = static_cast<int>(
+      std::lround(static_cast<float>(pixelW) * (newH / newW)));
+    pixelW = std::clamp(pixelW, 64, 8192);
+    pixelH = std::clamp(pixelH, 64, 8192);
+    if (pixelW != lastResizePixelW || pixelH != lastResizePixelH) {
+      lastResizeRequestTime = now;
+      lastResizePixelW = pixelW;
+      lastResizePixelH = pixelH;
+      comp->app->requestSize(pixelW, pixelH);
+    }
+  }
+
   if (!windowResizeDeltaLogged) {
     windowResizeDeltaLogged = true;
     log_controls(
@@ -868,6 +878,75 @@ Controls::endWindowResize()
                pixelW,
                pixelH,
                static_cast<double>(worldW));
+}
+
+bool
+Controls::debugResizeOnce()
+{
+  if (!registry || !windowManagerSpace) {
+    return false;
+  }
+  const char* spec = std::getenv("HACKMATRIX_DEBUG_WINDOW_RESIZE");
+  if (!spec) {
+    return false;
+  }
+  auto base = windowAimHit();
+  if (!base.has_value()) {
+    log_controls("controls: debug resize: no window under aim\n");
+    return false;
+  }
+  auto* comp = registry->try_get<WaylandApp::Component>(base->entity);
+  if (!comp || !comp->app) {
+    return false;
+  }
+  const int width = comp->app->getWidth();
+  const int height = comp->app->getHeight();
+  if (width <= 0 || height <= 0) {
+    return false;
+  }
+  char edges[8] = { 0 };
+  double dx = 0.0;
+  double dy = 0.0;
+  if (std::sscanf(spec, "%7[^,],%lf,%lf", edges, &dx, &dy) < 1) {
+    return false;
+  }
+  bool left = false;
+  bool right = false;
+  bool top = false;
+  bool bottom = false;
+  for (const char* c = edges; *c; ++c) {
+    switch (std::toupper(static_cast<unsigned char>(*c))) {
+      case 'L':
+        left = true;
+        break;
+      case 'R':
+        right = true;
+        break;
+      case 'T':
+        top = true;
+        break;
+      case 'B':
+        bottom = true;
+        break;
+      default:
+        break;
+    }
+  }
+  WindowManager::AppRayHit hit = *base;
+  const float margin =
+    std::max(6.0f, std::min(24.0f, 0.04f * std::min(width, height))) * 0.5f;
+  hit.surfacePixels.x =
+    right ? static_cast<float>(width) - margin
+          : (left ? margin : static_cast<float>(width) * 0.5f);
+  hit.surfacePixels.y =
+    bottom ? static_cast<float>(height) - margin
+           : (top ? margin : static_cast<float>(height) * 0.5f);
+  if (!beginWindowResize(hit)) {
+    return false;
+  }
+  handleWindowResizeDelta(dx, dy);
+  endWindowResize();
+  return true;
 }
 
 entt::entity

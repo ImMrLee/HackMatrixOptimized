@@ -431,16 +431,13 @@ handle_output_frame(wl_listener* listener, void* data)
       }
       bool pointerFocusRequested = wayland_pointer_focus_requested(server);
       bool pointerVisible = pointerFocusRequested || (cursorOverrideSet && cursorOverrideVisible);
-      // A free-view window move/resize owns the mouse delta: move the window
-      // instead of rotating the camera while it is active.
+      // A window resize owns the mouse delta so the camera stays put while the
+      // edge is being dragged. A carried window (G) does NOT block look: the
+      // camera rotates normally and the window follows it after the look below.
       bool windowManipulated = false;
       if (controls && controls->isWindowResizeActive()) {
         controls->handleWindowResizeDelta(server->input.delta_x,
                                            server->input.delta_y);
-        windowManipulated = true;
-      } else if (controls && controls->isWindowMoveActive()) {
-        controls->handleWindowMoveDelta(server->input.delta_x,
-                                        server->input.delta_y);
         windowManipulated = true;
       }
       if (!windowManipulated && !pointerVisible &&
@@ -450,6 +447,11 @@ handle_output_frame(wl_listener* listener, void* data)
         } else {
           camera->handleRotateForce(server->input.delta_x, -server->input.delta_y);
         }
+      }
+      // Carry the grabbed window in front of the camera after the look/position
+      // update so it tracks the view and player movement.
+      if (controls && controls->isWindowMoveActive()) {
+        controls->updateHeldWindowPose();
       }
       // Hide cursor and clear pointer focus when game mode is active so only deltas matter.
       // Keep free-look crosshair focus alive while it is aiming at a surface.

@@ -70,7 +70,14 @@ class Controls
   bool resizeBottom = false;
   float resizeW0 = 0.0f;
   float resizeH0 = 0.0f;
+  // Accumulated mouse movement since the resize began (world units). Each
+  // frame's delta is small, so the target size must be integrated, not
+  // recomputed from the frame delta alone.
+  float resizeAccumW = 0.0f;
+  float resizeAccumH = 0.0f;
   int resizePixelW0 = 0;
+  int lastResizePixelW = -1;
+  int lastResizePixelH = -1;
   glm::vec3 resizePos0{ 0.0f };
   glm::vec3 resizeRightAxis{ 1.0f, 0.0f, 0.0f };
   glm::vec3 resizeUpAxis{ 0.0f, 1.0f, 0.0f };
@@ -83,8 +90,9 @@ class Controls
   float pointerScreenX = 0.0f;
   float pointerScreenY = 0.0f;
   bool windowMoveNoHitLogged = false;
-  bool windowMoveDeltaLogged = false;
   bool windowResizeDeltaLogged = false;
+  double lastResizeRequestTime = 0.0;
+  bool debugResizeFired = false;
 
   std::unordered_set<xkb_keysym_t> pressed;
 
@@ -176,8 +184,11 @@ public:
   // Resize: aim the crosshair at a window edge/corner and drag with the left
   // button. Both only preview locally; the shared-window transform is
   // committed (broadcast once) when the interaction ends.
+  // "Carry" a window: while G is held it sits in front of the camera at a
+  // fixed distance, always facing the camera, so it follows mouse-look and
+  // WASD player movement.
   bool beginWindowMove(entt::entity entity, float distance);
-  bool handleWindowMoveDelta(double dx, double dy);
+  void updateHeldWindowPose();
   void endWindowMove();
   bool isWindowMoveActive() const { return windowMoveEntity != entt::null; }
 
@@ -185,6 +196,10 @@ public:
   bool handleWindowResizeDelta(double dx, double dy);
   void endWindowResize();
   bool isWindowResizeActive() const { return windowResizeEntity != entt::null; }
+
+  // Headless test hook: HACKMATRIX_DEBUG_WINDOW_RESIZE="R,300,0" forces one
+  // resize on the crosshair target when G is pressed.
+  bool debugResizeOnce();
 
   // Entity currently being previewed (move or resize); entt::null otherwise.
   entt::entity windowPreviewEntity() const;
