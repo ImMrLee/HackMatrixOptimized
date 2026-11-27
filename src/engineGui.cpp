@@ -134,6 +134,7 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
   ImGui::End();
 
   renderChat();
+  renderExitConfirm();
 
   // Free-look crosshair: the centre ray is what clicks and R aim with, so show
   // it whenever the cursor is grabbed and no window owns the input.
@@ -328,6 +329,46 @@ EngineGui::renderChat()
   }
   ImGui::End();
   ImGui::PopStyleColor();
+}
+
+void
+EngineGui::renderExitConfirm()
+{
+  if (!exitConfirmOpen) {
+    return;
+  }
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(
+    ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+           viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
+    ImGuiCond_Always,
+    ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_Always);
+  ImGui::Begin("Exit HackMatrix?",
+               nullptr,
+               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_AlwaysAutoResize);
+  ImGui::TextUnformatted("Are you sure you want to exit?");
+  ImGui::TextDisabled("Enter = Exit, Esc = Cancel");
+  ImGui::Spacing();
+
+  // Free view hides the cursor, so Enter/Esc must also work.
+  const bool confirm = ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+  if (confirm || ImGui::Button("Exit", ImVec2(90.0f, 0.0f))) {
+    exitConfirmOpen = false;
+    ImGui::End();
+    if (engine) {
+      engine->requestQuit();
+    }
+    return;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f)) ||
+      ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    exitConfirmOpen = false;
+  }
+  ImGui::End();
 }
 
 void

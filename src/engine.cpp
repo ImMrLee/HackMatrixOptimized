@@ -325,6 +325,9 @@ Engine::frame()
   double frameStart = currentTimeSeconds();
   api->mutateEntities();
   controls->pollPressedKeys();
+  if (engineGui && controls->takeExitConfirmRequest()) {
+    engineGui->openExitConfirm();
+  }
   renderer->render();
   if (engineGui) {
     engineGui->render(fps, frameIndex, frameTimes);
@@ -376,7 +379,7 @@ Engine::frame()
 
 void
 Engine::disableKeysIfImguiActive() {
-  if (ImGui::IsAnyItemActive() || isChatOpen()) {
+  if (ImGui::IsAnyItemActive() || isChatOpen() || isExitConfirmOpen()) {
     controls->disableKeys();
   } else {
     controls->enableKeys();

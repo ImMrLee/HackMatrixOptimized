@@ -76,16 +76,6 @@ key_handled_by_wm()
   return resp;
 }
 
-ControlResponse
-quit_key_handled_by_wm()
-{
-  ControlResponse resp;
-  resp.handledByWM = true;
-  resp.shouldExit = true;
-  return resp;
-}
-
-
 bool
 is_super_keysym(xkb_keysym_t sym)
 {
@@ -1280,12 +1270,15 @@ Controls::handleKeySym(xkb_keysym_t sym,
 
   if (matches_configured_or_fallback_key(
         controlMappings, sym, "quit", XKB_KEY_Escape, XKB_KEY_Escape)) {
-    if (is_pressed && typedKeyOverlay) {
-      typedKeyOverlay->recordKeysym(sym);
+    // Quit only on the initial press: the release must be consumed too, but it
+    // must not quit after the chat closed on the press (or double-trigger).
+    if (is_pressed) {
+      if (typedKeyOverlay) {
+        typedKeyOverlay->recordKeysym(sym);
+      }
+      exitConfirmPending_ = true;
     }
-    // quit key gets its own special consume function
-    // because the caller must be notified of quit flag
-    return quit_key_handled_by_wm();
+    return key_handled_by_wm();
   }
 
   if (is_pressed && typedKeyOverlay) {
@@ -1356,6 +1349,14 @@ Controls::applyLookDelta(double dx, double dy)
   if (renderer && renderer->getCamera()) {
     renderer->getCamera()->handleRotateForce(dx, dy);
   }
+}
+
+bool
+Controls::takeExitConfirmRequest()
+{
+  const bool pending = exitConfirmPending_;
+  exitConfirmPending_ = false;
+  return pending;
 }
 
 bool

@@ -91,6 +91,7 @@ class Controls
   float pointerScreenY = 0.0f;
   bool windowMoveNoHitLogged = false;
   bool windowResizeDeltaLogged = false;
+  bool exitConfirmPending_ = false;
   double lastResizeRequestTime = 0.0;
   bool debugResizeFired = false;
 
@@ -203,6 +204,10 @@ public:
 
   // Entity currently being previewed (move or resize); entt::null otherwise.
   entt::entity windowPreviewEntity() const;
+
+  // Esc in free view asks for confirmation instead of quitting immediately.
+  // EngineGui owns the dialog; it polls this once per frame.
+  bool takeExitConfirmRequest();
 
   // Edge/corner mask under the free-view crosshair for cursor feedback:
   // bit0 left, bit1 right, bit2 top, bit3 bottom.

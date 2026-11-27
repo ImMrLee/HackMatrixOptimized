@@ -441,6 +441,7 @@ handle_output_frame(wl_listener* listener, void* data)
         windowManipulated = true;
       }
       if (!windowManipulated && !pointerVisible &&
+          !server->engine->isExitConfirmOpen() &&
           (server->input.delta_x != 0.0 || server->input.delta_y != 0.0)) {
         if (controls) {
           controls->applyLookDelta(server->input.delta_x, -server->input.delta_y);
@@ -477,6 +478,9 @@ handle_output_frame(wl_listener* listener, void* data)
 
   glViewport(0, 0, width, height);
   server->engine->frame();
+  if (server->engine->consumeQuitRequest()) {
+    wl_display_terminate(server->display);
+  }
   // Run screenshot capture after the frame has been drawn so the image matches
   // what was just rendered.
   if (server->engine && server->engine->getWindowManager() &&

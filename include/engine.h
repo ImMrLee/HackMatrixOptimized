@@ -74,6 +74,7 @@ class Engine
   std::vector<PendingMultiplayerCommand> multiplayerCommands_;
   std::string multiplayerError_;
   void drainMultiplayerCommands();
+  bool quitRequested_ = false;
   // Drawn inside EngineGui's active ImGui frame (IME candidate window, ...).
   std::function<void()> imguiOverlay_;
   std::function<void(std::uint32_t, bool)> keyInjector_;
@@ -86,6 +87,10 @@ public:
   shared_ptr<MultiPlayer::Client> getClient() { return client; }
   shared_ptr<MultiPlayer::Server> getServer() { return server; }
   bool isChatOpen() const { return engineGui && engineGui->isChatOpen(); }
+  bool isExitConfirmOpen() const
+  {
+    return engineGui && engineGui->isExitConfirmOpen();
+  }
   Camera* getCamera() { return camera.get(); }
   Renderer* getRenderer() { return renderer.get(); }
   Api* getApi() { return api.get(); }
@@ -106,6 +111,15 @@ public:
   void updateImGuiKey(xkb_keysym_t sym, bool pressed);
   void setImguiWantsMouse(bool wants) { imguiMouseCapture = wants; }
   bool imguiWantsMouse() const { return imguiMouseCapture; }
+  // Deferred quit: the exit-confirmation dialog calls requestQuit(); the
+  // wlroots output frame consumes it and terminates the display safely.
+  void requestQuit() { quitRequested_ = true; }
+  bool consumeQuitRequest()
+  {
+    const bool requested = quitRequested_;
+    quitRequested_ = false;
+    return requested;
+  }
   void setImguiOverlay(std::function<void()> overlay)
   {
     imguiOverlay_ = std::move(overlay);

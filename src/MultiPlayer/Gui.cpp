@@ -34,6 +34,10 @@ Gui::Render()
   const int cAddressSize = 1024;
   static char cAddress[cAddressSize];
   static int selectedMode = 0;
+  static bool debugHostAttempted = false;
+  if (std::getenv("HACKMATRIX_DEBUG_HOST_SERVER")) {
+    selectedMode = 1;
+  }
   const char* modes[] = { "Client", "Server" };
 
   ImGui::Combo("Server/Client", &selectedMode, modes, IM_ARRAYSIZE(modes));
@@ -71,7 +75,9 @@ Gui::Render()
   auto activeClient = client;
   auto activeServer = server;
 
-  if (selectedMode == 0) {
+  // The sharing panel is driven by the client, so it must also be visible in
+  // Server mode: hosting creates a local client connected to the new server.
+  if (selectedMode == 0 || activeClient) {
     if (activeClient && activeClient->isConnected()) {
       pruneLoopbackPreviews();
       if (!streamSettingsInitialized) {
@@ -91,6 +97,7 @@ Gui::Render()
 
       const bool serverWorld =
         activeClient->worldAuthorityID() == MultiPlayer::kServerAuthorityID;
+      const bool selfAuthority = activeClient->isWorldAuthority();
       if (activeClient->isComputingScene()) {
         ImGui::TextDisabled("Computing scene fingerprint...");
       } else if (!activeClient->hasLocalScene()) {
@@ -116,6 +123,10 @@ Gui::Render()
       } else if (activeClient->hasPeerSceneInfo()) {
         ImGui::TextColored(ImVec4(0.45f, 1.0f, 0.45f, 1.0f),
                            "Scenes match: window sharing available");
+      } else if (selfAuthority) {
+        ImGui::TextColored(
+          ImVec4(0.45f, 1.0f, 0.45f, 1.0f),
+          "You are the world authority: sharing available");
       } else {
         ImGui::TextDisabled("Waiting for peer scene info...");
       }
@@ -302,7 +313,7 @@ Gui::Render()
               "Dedicated server: shares are kept for players who join later; world state comes from the server");
           } else if (sceneMismatch) {
             ImGui::TextWrapped("Scene mismatch: sharing disabled");
-          } else if (!sceneKnown) {
+          } else if (!sceneKnown && !selfAuthority) {
             ImGui::TextWrapped(
               "Waiting for peer scene info before sharing");
           } else {
@@ -466,7 +477,11 @@ Gui::Render()
         }
       }
     }
-  } else {
+  }
+
+  // Server controls stay available whenever a server is running (even after
+  // switching the combo back to Client) or while Server mode is selected.
+  if (selectedMode == 1 || (activeServer && activeServer->IsRunning())) {
     if (activeServer && activeServer->IsRunning()) {
       if (ImGui::Button("Stop Server")) {
         activeServer->Stop();
@@ -478,7 +493,11 @@ Gui::Render()
         engine->registerServer(server);
       }
     } else {
-      if (ImGui::Button("Host as Server")) {
+      const bool autoHost =
+        std::getenv("HACKMATRIX_DEBUG_HOST_SERVER") != nullptr &&
+        !debugHostAttempted;
+      if (autoHost || ImGui::Button("Host as Server")) {
+        debugHostAttempted = true;
         server = std::make_shared<Server>();
         engine->registerServer(server);
         if (!server->Start(port)) {

@@ -1046,6 +1046,11 @@ handle_pointer_motion(wl_listener* listener, void* data)
                                         static_cast<float>(local.second));
     }
   }
+  if (handle->server->engine &&
+      handle->server->engine->isExitConfirmOpen()) {
+    // The exit dialog owns input; do not move hover focus or the camera.
+    return;
+  }
 
   if (auto* client = remoteWindowController(handle->server);
       client != nullptr && handle->server->engine &&
@@ -1154,6 +1159,11 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
       controls->setPointerScreenPosition(static_cast<float>(local.first),
                                         static_cast<float>(local.second));
     }
+  }
+  if (handle->server->engine &&
+      handle->server->engine->isExitConfirmOpen()) {
+    // The exit dialog owns input; do not move hover focus or the camera.
+    return;
   }
 
   if (auto* client = remoteWindowController(handle->server);
@@ -1331,6 +1341,12 @@ inject_pointer_button(WlrServer* server,
     }
     feed_imgui_pointer(server, freeLook);
     imgui_captured = engine->imguiWantsMouse() && !freeLook;
+  }
+
+  if (server->engine && server->engine->isExitConfirmOpen()) {
+    // ImGui already received the click above; swallow the rest so the scene
+    // behind the dialog cannot be operated.
+    return true;
   }
 
   if (!freeLook) {

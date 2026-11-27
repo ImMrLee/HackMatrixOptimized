@@ -682,6 +682,12 @@ Client::canShareWindows() const
     // (last saved positions, ServerVoxels, ...); that must not block sharing.
     return true;
   }
+  if (isWorldAuthority()) {
+    // In host/relay mode the first client is the world authority and there may
+    // not be any peer yet. It defines the scene, so it can pre-share; late
+    // joiners still validate its fingerprint on receipt.
+    return true;
+  }
   return hasPeerSceneInfo() && !hasSceneMismatch();
 }
 

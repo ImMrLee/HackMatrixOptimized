@@ -33,8 +33,14 @@ class EngineGui
   char chatInput[1024] = {};
   void renderChat();
 
+  // Esc-to-exit confirmation dialog.
+  bool exitConfirmOpen = false;
+  void renderExitConfirm();
+
 public:
   bool isChatOpen() const { return chatOpen; }
+  bool isExitConfirmOpen() const { return exitConfirmOpen; }
+  void openExitConfirm() { exitConfirmOpen = true; }
   EngineGui(Engine* engine,
             shared_ptr<EntityRegistry> registry,
             shared_ptr<LoggerVector>);
