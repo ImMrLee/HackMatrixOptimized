@@ -13,6 +13,7 @@
 #include "systems/Move.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -166,10 +167,23 @@ Api::Api(std::string bindAddress,
   try {
     commandServer = new ProtobufCommandServer(this, bindAddress, context);
   } catch (const std::exception& e) {
-    logger->error("Failed to bind API socket on {}: {}", bindAddress, e.what());
-    throw;
+    // A stale HackMatrix instance (or another tool) may already own the API
+    // port. The compositor itself is still perfectly usable, so log clearly and
+    // continue without the external control API instead of aborting.
+    commandServer = nullptr;
+    logger->error("Failed to bind API socket on {}: {} (API disabled)",
+                  bindAddress,
+                  e.what());
+    std::fprintf(stderr,
+                 "HackMatrix: failed to bind API socket on %s: %s\n"
+                 "HackMatrix: another instance may be running; continuing "
+                 "without the external control API.\n",
+                 bindAddress.c_str(),
+                 e.what());
   }
-  offRenderThread = thread(&Api::poll, this);
+  if (commandServer != nullptr) {
+    offRenderThread = thread(&Api::poll, this);
+  }
 }
 
 CommandServer::CommandServer(Api* api,
@@ -1235,6 +1249,9 @@ Api::~Api()
 {
   continuePolling = false;
   context.shutdown();
-  offRenderThread.join();
+  if (offRenderThread.joinable()) {
+    offRenderThread.join();
+  }
   delete commandServer;
+  commandServer = nullptr;
 }

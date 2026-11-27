@@ -3,8 +3,10 @@
 #include <assimp/material.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 #include "components/BoundingSphere.h"
 #include "glm/trigonometric.hpp"
 #include "persister.h"
@@ -27,6 +29,18 @@ Model::Draw(Shader& shader)
 void
 Model::loadModel(string path)
 {
+  // Scene databases may reference model paths from another machine (the
+  // upstream sample DB uses absolute /home/collin/... paths). Skip missing
+  // files quietly instead of letting ASSIMP print the same multi-line error for
+  // every entity that uses them.
+  if (!std::filesystem::exists(path)) {
+    static std::unordered_set<std::string> warnedMissing;
+    if (warnedMissing.insert(path).second) {
+      spdlog::warn("Model file missing, skipping: {}", path);
+    }
+    return;
+  }
+
   Assimp::Importer import;
   const aiScene* scene =
     import.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);

@@ -111,7 +111,7 @@ class Api
   std::function<bool(std::uint32_t, bool)> pointerInjector_;
 
   zmq::context_t context;
-  CommandServer* commandServer;
+  CommandServer* commandServer = nullptr;
   // Wayland display (set by wlroots path) so QUIT requests can terminate cleanly.
   wl_display* display = nullptr;
 
