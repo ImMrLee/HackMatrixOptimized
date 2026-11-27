@@ -1359,6 +1359,46 @@ Controls::takeExitConfirmRequest()
   return pending;
 }
 
+void
+Controls::beginExitDialog()
+{
+  // In free view the cursor is hidden, so the dialog could not be clicked.
+  // Reveal it while the dialog is open and remember whether to restore.
+  exitDialogRestoreFreeLook_ = grabbedCursor;
+  log_controls("controls: exit dialog begin (restoreFreeLook=%d)\n",
+               exitDialogRestoreFreeLook_ ? 1 : 0);
+  if (!exitDialogRestoreFreeLook_) {
+    return;
+  }
+  grabbedCursor = false;
+  resetMouse = true;
+  if (wm) {
+    wm->setCursorVisible(true);
+    wm->clearCursorInputFocus();
+  }
+  // Put the cursor over the centred dialog instead of wherever it was hiding.
+  if (pointerCenterCallback) {
+    pointerCenterCallback();
+  }
+}
+
+void
+Controls::endExitDialog()
+{
+  log_controls("controls: exit dialog end (restoreFreeLook=%d)\n",
+               exitDialogRestoreFreeLook_ ? 1 : 0);
+  if (!exitDialogRestoreFreeLook_) {
+    return;
+  }
+  exitDialogRestoreFreeLook_ = false;
+  grabbedCursor = true;
+  resetMouse = true;
+  if (wm) {
+    wm->setCursorVisible(false);
+    wm->clearCursorInputFocus();
+  }
+}
+
 bool
 Controls::isPressed(xkb_keysym_t sym) const
 {

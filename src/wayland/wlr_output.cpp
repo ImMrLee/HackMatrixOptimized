@@ -481,17 +481,6 @@ handle_output_frame(wl_listener* listener, void* data)
   if (server->engine->consumeQuitRequest()) {
     wl_display_terminate(server->display);
   }
-  // Run screenshot capture after the frame has been drawn so the image matches
-  // what was just rendered.
-  if (server->engine && server->engine->getWindowManager() &&
-      server->engine->getRenderer()) {
-    auto wm = server->engine->getWindowManager();
-    if (wm && wm->consumeScreenshotRequest()) {
-      if (auto* renderer = server->engine->getRenderer()) {
-        renderer->screenshotFromCurrentFramebuffer(width, height, fbo);
-      }
-    }
-  }
 
   bool pointerLocked = wayland_pointer_locked(server);
   // Render software cursors (clients set them via wl_pointer.set_cursor).
@@ -518,6 +507,18 @@ handle_output_frame(wl_listener* listener, void* data)
       float sizePx = 24.0f * (handle->output ? handle->output->scale : 1.0f);
       auto pointer = output_local_pointer(server, handle->output);
       renderer->renderSoftwareCursor(pointer.first, pointer.second, sizePx);
+    }
+  }
+
+  // Run screenshot capture after everything (including the software cursor)
+  // has been drawn so the image matches what is displayed.
+  if (server->engine && server->engine->getWindowManager() &&
+      server->engine->getRenderer()) {
+    auto wm = server->engine->getWindowManager();
+    if (wm && wm->consumeScreenshotRequest()) {
+      if (auto* renderer = server->engine->getRenderer()) {
+        renderer->screenshotFromCurrentFramebuffer(width, height, fbo);
+      }
     }
   }
 

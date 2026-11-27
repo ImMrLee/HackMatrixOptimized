@@ -329,9 +329,11 @@ Engine::frame()
     static bool debugExitOpened = false;
     if (!debugExitOpened && std::getenv("HACKMATRIX_DEBUG_EXIT_CONFIRM")) {
       debugExitOpened = true;
+      controls->beginExitDialog();
       engineGui->openExitConfirm();
     }
     if (controls->takeExitConfirmRequest()) {
+      controls->beginExitDialog();
       engineGui->openExitConfirm();
     }
   }

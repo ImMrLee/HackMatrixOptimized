@@ -92,6 +92,7 @@ class Controls
   bool windowMoveNoHitLogged = false;
   bool windowResizeDeltaLogged = false;
   bool exitConfirmPending_ = false;
+  bool exitDialogRestoreFreeLook_ = false;
   double lastResizeRequestTime = 0.0;
   bool debugResizeFired = false;
 
@@ -208,6 +209,10 @@ public:
   // Esc in free view asks for confirmation instead of quitting immediately.
   // EngineGui owns the dialog; it polls this once per frame.
   bool takeExitConfirmRequest();
+  // While the exit dialog is open, reveal the cursor so its buttons can be
+  // clicked. On cancel, restore free look if the cursor was hidden before.
+  void beginExitDialog();
+  void endExitDialog();
 
   // Edge/corner mask under the free-view crosshair for cursor feedback:
   // bit0 left, bit1 right, bit2 top, bit3 bottom.

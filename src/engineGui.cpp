@@ -372,6 +372,11 @@ EngineGui::renderExitConfirm()
   if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f)) ||
       (!ignoreKeys && ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
     exitConfirmOpen = false;
+    if (engine) {
+      if (auto* controls = engine->getControls()) {
+        controls->endExitDialog();
+      }
+    }
   }
   ImGui::End();
 }
