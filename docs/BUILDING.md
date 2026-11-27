@@ -362,6 +362,8 @@ sudo pacman -U "$HOME"/HackMatrix-arch/hackmatrix-git-*.pkg.tar.zst
 | `HACKMATRIX_DEBUG_CHAT_OPEN=1` | 连接后自动打开聊天栏（UI 截图/测试） |
 | `HACKMATRIX_DEBUG_CHAT_SEND=文本` | 连接后自动发送一条聊天消息（中继测试） |
 | `HACKMATRIX_DEBUG_HOST_SERVER=1` | 自动切到 Server 模式并主持服务器（UI 截图/测试） |
+| `HACKMATRIX_DEBUG_EXIT_CONFIRM=1` | 自动打开 Esc 退出确认框（UI 截图/测试） |
+| `HACKMATRIX_DEBUG_EXIT_FLASH=1` | 打开确认框时模拟同帧 Esc 输入（回归测试用） |
 
 覆盖层会与场景共用同一个 GL 上下文和帧缓冲，并从 wlroots 输出渲染回调中绘制。鼠标输入通过 Wayland 指针处理器转发；当覆盖层需要鼠标时，点击会被消耗，不会继续传递给游戏控制或客户端。键盘输入通过 `Engine::updateImGuiKey` 转发，实体编辑器的文本输入框可用；但覆盖层不是 Wayland 文本输入客户端，文本字段目前只支持 ASCII（中文输入见下一节）。
 

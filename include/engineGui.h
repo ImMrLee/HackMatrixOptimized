@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdlib>
 #include "MultiPlayer/Client.h"
 #include "MultiPlayer/Server.h"
 #include "imgui/imgui.h"
@@ -35,12 +36,24 @@ class EngineGui
 
   // Esc-to-exit confirmation dialog.
   bool exitConfirmOpen = false;
+  // The Esc press that opened the dialog can still be visible to ImGui for a
+  // frame or two, so ignore Enter/Esc briefly or it cancels immediately.
+  int exitConfirmIgnoreFrames = 0;
   void renderExitConfirm();
 
 public:
   bool isChatOpen() const { return chatOpen; }
   bool isExitConfirmOpen() const { return exitConfirmOpen; }
-  void openExitConfirm() { exitConfirmOpen = true; }
+  void openExitConfirm()
+  {
+    exitConfirmOpen = true;
+    exitConfirmIgnoreFrames = 2;
+    // Headless regression hook: mimic the real keyboard feeding the same Esc
+    // press to ImGui on the opening frame.
+    if (std::getenv("HACKMATRIX_DEBUG_EXIT_FLASH")) {
+      ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, true);
+    }
+  }
   EngineGui(Engine* engine,
             shared_ptr<EntityRegistry> registry,
             shared_ptr<LoggerVector>);

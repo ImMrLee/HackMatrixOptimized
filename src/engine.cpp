@@ -325,8 +325,15 @@ Engine::frame()
   double frameStart = currentTimeSeconds();
   api->mutateEntities();
   controls->pollPressedKeys();
-  if (engineGui && controls->takeExitConfirmRequest()) {
-    engineGui->openExitConfirm();
+  if (engineGui) {
+    static bool debugExitOpened = false;
+    if (!debugExitOpened && std::getenv("HACKMATRIX_DEBUG_EXIT_CONFIRM")) {
+      debugExitOpened = true;
+      engineGui->openExitConfirm();
+    }
+    if (controls->takeExitConfirmRequest()) {
+      engineGui->openExitConfirm();
+    }
   }
   renderer->render();
   if (engineGui) {

@@ -337,6 +337,10 @@ EngineGui::renderExitConfirm()
   if (!exitConfirmOpen) {
     return;
   }
+  const bool ignoreKeys = exitConfirmIgnoreFrames > 0;
+  if (exitConfirmIgnoreFrames > 0) {
+    --exitConfirmIgnoreFrames;
+  }
   ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(
     ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
@@ -354,7 +358,8 @@ EngineGui::renderExitConfirm()
   ImGui::Spacing();
 
   // Free view hides the cursor, so Enter/Esc must also work.
-  const bool confirm = ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+  const bool confirm =
+    !ignoreKeys && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
   if (confirm || ImGui::Button("Exit", ImVec2(90.0f, 0.0f))) {
     exitConfirmOpen = false;
     ImGui::End();
@@ -365,7 +370,7 @@ EngineGui::renderExitConfirm()
   }
   ImGui::SameLine();
   if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f)) ||
-      ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      (!ignoreKeys && ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
     exitConfirmOpen = false;
   }
   ImGui::End();
