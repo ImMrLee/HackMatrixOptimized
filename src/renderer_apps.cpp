@@ -2,6 +2,7 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <algorithm>
 #include <unordered_set>
 
 #include "remote_app.h"
@@ -271,46 +272,50 @@ Renderer::renderApps()
     if (!bindAppTexture(app)) {
       continue;
     }
-    // Keep the in-world quad at the positionable's size; just track the app's
-    // pixel size for logging and aspect ratio.
-    float sx = static_cast<float>(app->getWidth()) /
-               static_cast<float>(SCREEN_WIDTH);
-    float sy = static_cast<float>(app->getHeight()) /
-               static_cast<float>(SCREEN_HEIGHT);
-    glm::mat4 model = positionable.modelMatrix;
-    shader->setMatrix4("model", model);
-    shader->setMatrix4("bootableScale", app->getHeightScalar());
-    shader->setBool("appTransparent", false);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
 
+    const bool focused =
+      wm && wm->getCurrentlyFocusedApp().has_value() &&
+      wm->getCurrentlyFocusedApp().value() == entity;
 
-    // If focused, also draw directly to screen to ensure visibility.
-    if (wm && wm->getCurrentlyFocusedApp().has_value() &&
-        wm->getCurrentlyFocusedApp().value() == entity) {
-      if (!bindAppTexture(app)) {
-        continue;
-      }
-      shader->setBool("directRender", true);
-      glm::mat4 model = glm::mat4(1.0f);
-      float sx = static_cast<float>(app->getWidth()) /
-                 static_cast<float>(SCREEN_WIDTH);
-      float sy = static_cast<float>(app->getHeight()) /
-                 static_cast<float>(SCREEN_HEIGHT);
-      model = glm::scale(model, glm::vec3(sx, sy, 1.0f));
-      shader->setMatrix4("model", model);
-      glBindVertexArray(DIRECT_RENDER_VAO);
-      GLboolean depthMask = GL_TRUE;
-      glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
-      glDisable(GL_DEPTH_TEST);
-      glDepthMask(GL_FALSE); // avoid clobbering depth for in-world apps
-      glDrawArrays(GL_TRIANGLES, 0, 6);
-      glDepthMask(depthMask);
-      glEnable(GL_DEPTH_TEST);
+    if (!focused) {
+      // In-world quad at the positionable's size.
       shader->setBool("directRender", false);
-      // Restore model matrix/VAO for subsequent in-world draws.
       shader->setMatrix4("model", positionable.modelMatrix);
+      shader->setMatrix4("bootableScale", app->getHeightScalar());
+      shader->setBool("appTransparent", false);
       glBindVertexArray(APP_VAO);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
+      continue;
     }
+
+    // Focused windows are drawn directly in screen space (1:1 pixels when they
+    // fit). A resized window can be wider/taller than the output, so shrink it
+    // to fit instead of letting the quad clip past the screen and cut the
+    // title bar off.
+    const float sx = static_cast<float>(app->getWidth()) /
+                     static_cast<float>(SCREEN_WIDTH);
+    const float sy = static_cast<float>(app->getHeight()) /
+                     static_cast<float>(SCREEN_HEIGHT);
+    if (sx <= 0.0f || sy <= 0.0f) {
+      continue;
+    }
+    const float fit = std::min(1.0f, std::min(1.0f / sx, 1.0f / sy));
+    shader->setBool("directRender", true);
+    glm::mat4 directModel = glm::mat4(1.0f);
+    directModel = glm::scale(directModel, glm::vec3(sx * fit, sy * fit, 1.0f));
+    shader->setMatrix4("model", directModel);
+    glBindVertexArray(DIRECT_RENDER_VAO);
+    GLboolean depthMask = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE); // avoid clobbering depth for in-world apps
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDepthMask(depthMask);
+    glEnable(GL_DEPTH_TEST);
+    shader->setBool("directRender", false);
+    // Restore model matrix/VAO for subsequent draws.
+    shader->setMatrix4("model", positionable.modelMatrix);
+    glBindVertexArray(APP_VAO);
   }
 
   // Remote/shared windows (F14c). These use the same in-world quad path as
