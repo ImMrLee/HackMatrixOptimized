@@ -25,7 +25,16 @@ class EngineGui
   void renderComponentPanel(entt::entity);
   void renderEntities();
 
+  // Multiplayer chat overlay (T to open, Enter send, Esc close).
+  bool chatOpen = false;
+  bool chatJustOpened = false;
+  bool chatScrollToBottom = false;
+  std::size_t lastChatCount = 0;
+  char chatInput[1024] = {};
+  void renderChat();
+
 public:
+  bool isChatOpen() const { return chatOpen; }
   EngineGui(Engine* engine,
             shared_ptr<EntityRegistry> registry,
             shared_ptr<LoggerVector>);

@@ -29,7 +29,8 @@ enum CHANNEL_TYPE
   WINDOW_VIDEO = 6,
   WEBRTC_SIGNAL = 7,
   WORLD_SYNC = 8,
-  PLAYER_LEAVE = 9
+  PLAYER_LEAVE = 9,
+  CHAT = 10
 };
 
 class Server

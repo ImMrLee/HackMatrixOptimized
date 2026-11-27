@@ -51,6 +51,13 @@ process_key_sym(WlrServer* server,
   // Feed the ImGui debug overlay (text input) before WM/seat handling.
   server->engine->updateImGuiKey(sym, pressed);
 
+  // While the chat input is open it owns the keyboard. ImGui already received
+  // the event above, so typing/Enter/Esc still work without reaching the WM or
+  // a focused client.
+  if (server->engine->isChatOpen()) {
+    return;
+  }
+
   if (auto client = server->engine->getClient();
       client && client->isControllingRemote()) {
     if (sym == XKB_KEY_Escape) {

@@ -41,6 +41,15 @@ struct RemoteWindowInfo
   std::string controlStatus;
 };
 
+struct ChatEntry
+{
+  std::uint32_t senderID = 0;
+  std::string name;
+  std::string text;
+  std::uint64_t timestampMs = 0;
+  bool system = false;
+};
+
 class Client
 {
 public:
@@ -61,6 +70,12 @@ public:
   void poll();
   bool shouldSendPlayerPacket();
   void justSentPlayerPacket();
+
+  // Chat (reliable channel 10). sendChat appends locally immediately; the
+  // relay echoes to other peers and the sender ignores its own echo.
+  void sendChat(const std::string& text);
+  void addSystemChat(const std::string& text);
+  std::vector<ChatEntry> chatLog() const;
 
   SceneFingerprint localSceneFingerprint() const;
   bool hasLocalScene() const;
@@ -206,6 +221,8 @@ private:
 
   bool sendSceneInfo();
   void handleSceneInfo(const uint8_t* data, std::size_t size);
+  void handleChat(const uint8_t* data, std::size_t size);
+  std::string chatDisplayName();
   void startSceneHash();
   void pollSceneHash();
   void handleEnetEvent(ENetEvent& event);
@@ -274,6 +291,11 @@ private:
   mutable std::mutex sceneMutex;
   SceneFingerprint localScene;
   std::unordered_map<uint32_t, SceneFingerprint> peerScenes;
+
+  mutable std::mutex chatMutex_;
+  std::vector<ChatEntry> chatLog_;
+  std::string playerName_;
+  static constexpr std::size_t kMaxChatLogEntries = 200;
 
   mutable std::mutex shareMutex;
   std::unordered_map<entt::entity, WindowShareSettings> windowShares;

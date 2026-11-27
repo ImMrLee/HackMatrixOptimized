@@ -89,6 +89,15 @@ See the [wiki page](https://github.com/collinalexbell/HackMatrix/wiki/Game-Engin
 
 这个菜单还有Multyplayer模式，功能大致是可以让其他使用hackmartix的用户可以加入其他人的环境（有点意思，原作者没有说明这个功能，但我发现这个只是能相互看到各自的头像，不能多窗口互联）
 
+### 多人聊天
+
+连接多人模式后，按下 `T` 打开右下角聊天栏：
+
+- 输入文字后按 `<enter>` 发送；
+- 按 `<esc>` 关闭；
+- 玩家加入/离开、窗口控制授权也会以系统消息显示；
+- 目前输入只支持 ASCII，中文输入仍受 fcitx5 问题影响。
+
 ## 编译 / 安装
 
 完整的依赖安装、发行版命令、wlroots / Crow 配置、构建选项、测试、打包和专用服务器构建，见：

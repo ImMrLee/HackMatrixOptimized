@@ -133,6 +133,8 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
   }
   ImGui::End();
 
+  renderChat();
+
   // Free-look crosshair: the centre ray is what clicks and R aim with, so show
   // it whenever the cursor is grabbed and no window owns the input.
   if (auto* controls = engine->getControls()) {
@@ -214,6 +216,118 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
   glUseProgram(prevProgram);
   glBindBuffer(GL_ARRAY_BUFFER, prevArray);
   glBindTexture(GL_TEXTURE_2D, prevTexture);
+}
+
+void
+EngineGui::renderChat()
+{
+  if (!engine) {
+    chatOpen = false;
+    return;
+  }
+  auto client = engine->getClient();
+  auto wm = engine->getWindowManager();
+  const bool connected = client && client->isConnected();
+  const bool appFocused = wm && wm->hasCurrentOrPendingFocus();
+  if (!connected || appFocused) {
+    chatOpen = false;
+    return;
+  }
+
+  // Headless UI test hooks.
+  static bool debugChatSent = false;
+  if (!debugChatSent) {
+    if (const char* message = std::getenv("HACKMATRIX_DEBUG_CHAT_SEND")) {
+      debugChatSent = true;
+      client->sendChat(message);
+    }
+  }
+  if (std::getenv("HACKMATRIX_DEBUG_CHAT_OPEN")) {
+    chatOpen = true;
+  }
+
+  ImGuiIO& io = ImGui::GetIO();
+  if (!chatOpen) {
+    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_T, false)) {
+      chatOpen = true;
+      chatJustOpened = true;
+      chatScrollToBottom = true;
+      // Drop the 't' that opened the chat so it is not inserted into the input.
+      io.ClearInputCharacters();
+    }
+    return;
+  }
+
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    chatOpen = false;
+    return;
+  }
+
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  const ImVec2 size(460.0f, 280.0f);
+  const ImVec2 pos(viewport->WorkPos.x + viewport->WorkSize.x - size.x - 16.0f,
+                   viewport->WorkPos.y + viewport->WorkSize.y - size.y - 16.0f);
+  ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+  ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.07f, 0.92f));
+  ImGui::Begin("##hackmatrix_chat",
+               nullptr,
+               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoFocusOnAppearing);
+  ImGui::TextUnformatted("Chat  (Enter send, Esc close)");
+  ImGui::Separator();
+
+  const float footer = ImGui::GetFrameHeightWithSpacing() + 6.0f;
+  ImGui::BeginChild("##chat_log",
+                    ImVec2(0.0f, -footer),
+                    false,
+                    ImGuiWindowFlags_NoScrollbar);
+  auto log = client->chatLog();
+  if (log.size() != lastChatCount) {
+    lastChatCount = log.size();
+    chatScrollToBottom = true;
+  }
+  for (const auto& entry : log) {
+    if (entry.system) {
+      ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                         "* %s",
+                         entry.text.c_str());
+    } else {
+      ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1.0f),
+                         "%s:",
+                         entry.name.c_str());
+      ImGui::SameLine();
+      ImGui::TextWrapped("%s", entry.text.c_str());
+    }
+  }
+  if (chatScrollToBottom) {
+    ImGui::SetScrollHereY(1.0f);
+    chatScrollToBottom = false;
+  }
+  ImGui::EndChild();
+
+  if (chatJustOpened) {
+    ImGui::SetKeyboardFocusHere();
+    chatJustOpened = false;
+  }
+  ImGui::SetNextItemWidth(-1.0f);
+  const bool submitted =
+    ImGui::InputText("##chat_input",
+                     chatInput,
+                     sizeof(chatInput),
+                     ImGuiInputTextFlags_EnterReturnsTrue);
+  if (submitted) {
+    if (chatInput[0] != '\0') {
+      client->sendChat(chatInput);
+    }
+    chatInput[0] = '\0';
+    chatScrollToBottom = true;
+    ImGui::SetKeyboardFocusHere(-1);
+  }
+  ImGui::End();
+  ImGui::PopStyleColor();
 }
 
 void

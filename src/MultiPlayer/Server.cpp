@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "chat_protocol.h"
 #include "webrtc_protocol.h"
 #include "window_share_protocol.h"
 #include "world_sync_protocol.h"
@@ -45,7 +46,8 @@ Server::Start(int port)
   address.host = ENET_HOST_ANY;
   address.port = port;
 
-  server = enet_host_create(&address, 32, 10, 0, 0);
+  // Channels 0..10 are used (chat is channel 10); leave headroom.
+  server = enet_host_create(&address, 32, 16, 0, 0);
   if (server == NULL) {
     return false;
   }
@@ -503,6 +505,25 @@ Server::PollLoop()
                     enet_packet_destroy(relay);
                   }
                 }
+              }
+            }
+          } else if (event.channelID == CHAT) {
+            // Chat: stamp the real sender and broadcast to every peer. Clients
+            // ignore their own echo; receivers re-validate the payload.
+            spdlog::info("MultiPlayer: chat relay from {} ({} bytes)",
+                         event.peer->connectID,
+                         event.packet->dataLength);
+            if (event.packet->dataLength >= 4) {
+              setChatSender(static_cast<uint8_t*>(event.packet->data),
+                            event.packet->dataLength,
+                            event.peer->connectID);
+              ENetPacket* relay = enet_packet_create(
+                event.packet->data,
+                event.packet->dataLength,
+                ENET_PACKET_FLAG_RELIABLE);
+              if (relay != nullptr) {
+                enet_host_broadcast(server, CHAT, relay);
+                enet_host_flush(server);
               }
             }
           } else if (event.channelID == WORLD_SYNC) {

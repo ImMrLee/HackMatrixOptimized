@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <iostream>
@@ -18,6 +19,7 @@
 
 #include "Config.h"
 #include "camera.h"
+#include "chat_protocol.h"
 #include "model.h"
 #include "persister.h"
 #include "remote_app.h"
@@ -121,7 +123,8 @@ Client::connect(const std::string& address, int port)
     pendingWindowMessages.clear();
   }
 
-  client = enet_host_create(NULL, 1, 10, 0, 0);
+  // Channels 0..10 are used (chat is channel 10); leave headroom.
+  client = enet_host_create(NULL, 1, 16, 0, 0);
   if (client == NULL) {
     connectionError_ = "failed to create ENet client";
     spdlog::error("MultiPlayer: {}", connectionError_);
@@ -344,6 +347,7 @@ Client::handleEnetEvent(ENetEvent& event)
       std::memcpy(&playerID, event.packet->data, sizeof(uint32_t));
       if (peer->connectID != playerID) {
         systems::registerPlayer(registry, playerID);
+        addSystemChat("Player #" + std::to_string(playerID) + " joined");
         spdlog::info("MultiPlayer: player {} joined", playerID);
       }
       break;
@@ -374,10 +378,15 @@ Client::handleEnetEvent(ENetEvent& event)
       std::memcpy(&playerID, event.packet->data, sizeof(uint32_t));
       if (peer->connectID != playerID) {
         systems::unregisterPlayer(registry, playerID);
+        addSystemChat("Player #" + std::to_string(playerID) + " left");
         spdlog::info("MultiPlayer: player {} left", playerID);
       }
       break;
     }
+    case kChatChannel:
+      handleChat(static_cast<const std::uint8_t*>(event.packet->data),
+                 event.packet->dataLength);
+      break;
     default:
       break;
   }
@@ -1695,12 +1704,14 @@ Client::handleControlState(const uint8_t* data, std::size_t size)
 
   const uint64_t key = (static_cast<uint64_t>(owner) << 32) | shareId;
   bool selfControlling = false;
+  uint32_t previousController = 0;
   {
     std::lock_guard<std::mutex> lock(shareMutex);
     auto it = remoteWindowShares.find(key);
     if (it == remoteWindowShares.end()) {
       return;
     }
+    previousController = it->second.controllerID;
     it->second.allowControl = allowControl;
     it->second.controllerID = controllerID;
     it->second.controlPending = false;
@@ -1718,6 +1729,20 @@ Client::handleControlState(const uint8_t* data, std::size_t size)
       controlledOwnerID = 0;
       controlledShareId = 0;
       remoteUnfocusRequest_.store(true);
+    }
+  }
+
+  if (controllerID != previousController) {
+    if (controllerID == 0) {
+      if (previousController != 0) {
+        addSystemChat("Player #" + std::to_string(previousController) +
+                      " released control of a shared window");
+      }
+    } else if (selfControlling) {
+      addSystemChat("You took control of a shared window");
+    } else {
+      addSystemChat("Player #" + std::to_string(controllerID) +
+                    " took control of a shared window");
     }
   }
 
@@ -2079,6 +2104,7 @@ Client::handleControlMessage(const uint8_t* data, std::size_t size)
         controlNotice_ = "Player #" + std::to_string(header.senderID) +
                          " released control";
         controlNoticeUntil_ = nowSeconds() + 4.0;
+        addSystemChat(controlNotice_);
         sendControlState(header.shareId, true, 0);
         spdlog::info("MultiPlayer: player {} released control of share {}",
                      header.senderID,
@@ -2131,6 +2157,7 @@ Client::handleControlMessage(const uint8_t* data, std::size_t size)
         controlNotice_ += " of '" + app->getWindowName() + "'";
       }
       controlNoticeUntil_ = nowSeconds() + 5.0;
+      addSystemChat(controlNotice_);
       spdlog::info("MultiPlayer: player {} took control of share {}",
                    controllerID,
                    header.shareId);
@@ -2697,6 +2724,120 @@ Client::sendPlayer(glm::vec3 position, glm::vec3 front)
   }
 
   return false;
+}
+
+namespace {
+std::uint64_t
+chatNowMs()
+{
+  return static_cast<std::uint64_t>(
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch())
+      .count());
+}
+} // namespace
+
+std::string
+Client::chatDisplayName()
+{
+  if (!playerName_.empty()) {
+    return playerName_;
+  }
+  const char* user = std::getenv("USER");
+  playerName_ = (user != nullptr && *user != '\0') ? user : "Player";
+  return playerName_;
+}
+
+void
+Client::sendChat(const std::string& text)
+{
+  if (!isConnected() || peer == nullptr || client == nullptr) {
+    return;
+  }
+  const std::string clean = chat_detail::sanitize(text, kMaxChatTextBytes);
+  if (clean.empty()) {
+    return;
+  }
+  const std::string name = chatDisplayName();
+  const std::uint64_t timestamp = chatNowMs();
+  const std::vector<std::uint8_t> bytes =
+    encodeChat(peer->connectID, name, clean, timestamp);
+  if (bytes.empty()) {
+    return;
+  }
+
+  // Local echo so the sender sees the message immediately.
+  {
+    std::lock_guard<std::mutex> lock(chatMutex_);
+    chatLog_.push_back(ChatEntry{ peer->connectID, name, clean, timestamp, false });
+    if (chatLog_.size() > kMaxChatLogEntries) {
+      chatLog_.erase(chatLog_.begin());
+    }
+  }
+
+  ENetPacket* packet = enet_packet_create(
+    bytes.data(), bytes.size(), ENET_PACKET_FLAG_RELIABLE);
+  if (packet == nullptr) {
+    return;
+  }
+  if (enet_peer_send(peer, kChatChannel, packet) != 0) {
+    enet_packet_destroy(packet);
+    return;
+  }
+  enet_host_flush(client);
+  spdlog::info("MultiPlayer: sent chat on channel {} ({} bytes)",
+               static_cast<int>(kChatChannel),
+               bytes.size());
+}
+
+void
+Client::handleChat(const std::uint8_t* data, std::size_t size)
+{
+  ChatMessage message;
+  if (!decodeChat(data, size, message)) {
+    spdlog::warn("MultiPlayer: dropped malformed chat packet ({} bytes)", size);
+    return;
+  }
+  if (peer != nullptr && message.senderID == peer->connectID) {
+    // Our own message; it was already added locally on send.
+    return;
+  }
+  if (message.name.empty()) {
+    message.name = "Player #" + std::to_string(message.senderID);
+  }
+  spdlog::info("MultiPlayer: chat from {} ({} bytes)",
+               message.senderID,
+               message.text.size());
+  std::lock_guard<std::mutex> lock(chatMutex_);
+  chatLog_.push_back(ChatEntry{ message.senderID,
+                                std::move(message.name),
+                                std::move(message.text),
+                                message.timestampMs,
+                                false });
+  if (chatLog_.size() > kMaxChatLogEntries) {
+    chatLog_.erase(chatLog_.begin());
+  }
+}
+
+void
+Client::addSystemChat(const std::string& text)
+{
+  const std::string clean = chat_detail::sanitize(text, kMaxChatTextBytes);
+  if (clean.empty()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(chatMutex_);
+  chatLog_.push_back(ChatEntry{ 0, "", clean, chatNowMs(), true });
+  if (chatLog_.size() > kMaxChatLogEntries) {
+    chatLog_.erase(chatLog_.begin());
+  }
+}
+
+std::vector<ChatEntry>
+Client::chatLog() const
+{
+  std::lock_guard<std::mutex> lock(chatMutex_);
+  return chatLog_;
 }
 
 bool

@@ -85,6 +85,7 @@ public:
   shared_ptr<EntityRegistry> getRegistry();
   shared_ptr<MultiPlayer::Client> getClient() { return client; }
   shared_ptr<MultiPlayer::Server> getServer() { return server; }
+  bool isChatOpen() const { return engineGui && engineGui->isChatOpen(); }
   Camera* getCamera() { return camera.get(); }
   Renderer* getRenderer() { return renderer.get(); }
   Api* getApi() { return api.get(); }
