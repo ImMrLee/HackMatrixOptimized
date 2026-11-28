@@ -26,7 +26,11 @@ include/protos/*.h
 
 logs
 build
+build-*/
+cmake-build-*/
 .ccls-cache/
+compile_commands.json
+*.pkg.tar.zst
 
 py/scns
 

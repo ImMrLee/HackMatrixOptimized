@@ -1,1 +1,0 @@
-/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/bootServer.dir/link.d CMakeFiles/bootServer.dir/src/MultiPlayer/bootServer.cpp.o CMakeFiles/bootServer.dir/src/MultiPlayer/Server.cpp.o -o tools/deployTools/bootServer  -lpthread -lspdlog -lfmt
