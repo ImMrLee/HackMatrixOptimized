@@ -80,6 +80,7 @@ class Camera
   float yFov;
   static float DEFAULT_CAMERA_SPEED;
   float cameraSpeed = DEFAULT_CAMERA_SPEED;
+  float lookSensitivity = 0.1f;
 
 public:
   glm::vec3 front;
@@ -103,6 +104,15 @@ public:
   Frustum createFrustum();
   void changeSpeed(float delta);
   void resetSpeed();
+  // Runtime-editable settings (System Config).
+  void setFovDegrees(float degrees);
+  float getFovDegrees() const;
+  void setFarPlane(float far);
+  float getFarPlane() const;
+  void setLookSensitivity(float sensitivity);
+  float getLookSensitivity() const { return lookSensitivity; }
+  void setCameraSpeed(float speed);
+  float getCameraSpeed() const { return cameraSpeed; }
 };
 
 #endif

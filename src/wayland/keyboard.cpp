@@ -54,7 +54,8 @@ process_key_sym(WlrServer* server,
   // While the chat input is open it owns the keyboard. ImGui already received
   // the event above, so typing/Enter/Esc still work without reaching the WM or
   // a focused client.
-  if (server->engine->isChatOpen() || server->engine->isExitConfirmOpen()) {
+  if (server->engine->isChatOpen() || server->engine->isExitConfirmOpen() ||
+      server->engine->isDisplayConfirmOpen()) {
     return;
   }
 

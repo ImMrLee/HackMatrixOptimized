@@ -17,10 +17,13 @@
 #include "persister.h"
 #include "string"
 #include <algorithm>
+#include <cstdio>
 #include <functional>
 #include <optional>
 #include <string>
 #include <cstdlib>
+#include "Config.h"
+#include "time_utils.h"
 #include "entity.h"
 #include "systems/Boot.h"
 #include "systems/Door.h"
@@ -62,6 +65,7 @@ EngineGui::EngineGui(Engine* engine,
   // Headless UI tests open the sidebar to reach the tabs; normal runs start
   // with it hidden behind the left-edge tab.
   if (std::getenv("HACKMATRIX_IMGUI_MULTIPLAYER_TAB") != nullptr ||
+      std::getenv("HACKMATRIX_IMGUI_SYSTEM_TAB") != nullptr ||
       std::getenv("HACKMATRIX_IMGUI_MENU_OPEN") != nullptr) {
     menuVisible = true;
     menuAnim = 1.0f;
@@ -106,6 +110,7 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
 
   renderChat();
   renderExitConfirm();
+  renderDisplayConfirm();
 
   // Free-look crosshair: the centre ray is what clicks and R aim with, so show
   // it whenever the cursor is grabbed and no window owns the input.
@@ -257,6 +262,15 @@ EngineGui::renderMenu(MultiPlayer::Gui& gui, float fps)
         renderEntities();
         ImGui::EndTabItem();
       }
+      const bool forceSystemTab =
+        std::getenv("HACKMATRIX_IMGUI_SYSTEM_TAB") != nullptr;
+      if (ImGui::BeginTabItem("System Config",
+                              nullptr,
+                              forceSystemTab ? ImGuiTabItemFlags_SetSelected
+                                             : 0)) {
+        renderSystemConfig();
+        ImGui::EndTabItem();
+      }
       const bool forceMultiplayerTab =
         std::getenv("HACKMATRIX_IMGUI_MULTIPLAYER_TAB") != nullptr;
       if (ImGui::BeginTabItem("Multiplayer",
@@ -328,6 +342,265 @@ EngineGui::renderMenu(MultiPlayer::Gui& gui, float fps)
   }
   ImGui::End();
   ImGui::PopStyleVar();
+}
+
+void
+EngineGui::renderSystemConfig()
+{
+  const double now = nowSeconds();
+  auto slider = [](const char* label,
+                   float* value,
+                   float low,
+                   float high,
+                   const char* format) {
+    ImGui::TextUnformatted(label);
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::PushID(label);
+    const bool changed = ImGui::SliderFloat("##value", value, low, high, format);
+    ImGui::PopID();
+    return changed;
+  };
+  auto persistFloat = [](const char* key, float value) {
+    try {
+      Config::singleton()->setFloatAndSave(key, value);
+    } catch (...) {
+      // Read-only config should not crash the UI.
+    }
+  };
+
+  ImGui::TextUnformatted("Audio");
+  ImGui::Separator();
+  systemSettings_.refreshAudioIfDue(now);
+  const AudioSettings& audio = systemSettings_.audio();
+  if (!audio.available) {
+    if (audio.backend.empty()) {
+      ImGui::TextDisabled("No supported audio backend");
+      ImGui::TextDisabled("(wpctl / pactl / amixer)");
+    } else {
+      ImGui::TextDisabled("%s: no server", audio.backend.c_str());
+    }
+  } else {
+    static float volumeUi = 50.0f;
+    if (!ImGui::IsAnyItemActive()) {
+      volumeUi = audio.volume * 100.0f;
+    }
+    slider("Volume", &volumeUi, 0.0f, 100.0f, "%.0f%%");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      systemSettings_.setVolume(volumeUi / 100.0f);
+    }
+    bool muted = audio.muted;
+    if (ImGui::Checkbox("Mute", &muted)) {
+      systemSettings_.toggleMute();
+    }
+    ImGui::TextDisabled("Backend: %s", audio.backend.c_str());
+  }
+
+  ImGui::Separator();
+  ImGui::TextUnformatted("Display");
+  ImGui::Separator();
+  systemSettings_.refreshBrightnessIfDue(now);
+  const BrightnessSettings& brightness = systemSettings_.brightness();
+  if (!brightness.available) {
+    ImGui::TextDisabled("No backlight device");
+  } else {
+    static float brightnessUi = 50.0f;
+    if (!ImGui::IsAnyItemActive()) {
+      brightnessUi = brightness.max > 0
+                       ? 100.0f * static_cast<float>(brightness.current) /
+                           static_cast<float>(brightness.max)
+                       : 0.0f;
+    }
+    ImGui::BeginDisabled(!brightness.writable);
+    slider("Brightness", &brightnessUi, 0.0f, 100.0f, "%.0f%%");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      systemSettings_.setBrightness(brightnessUi / 100.0f);
+    }
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Device: %s", brightness.device.c_str());
+    if (!brightness.writable) {
+      ImGui::TextDisabled("Read-only (permission denied)");
+    }
+  }
+
+  auto output = engine ? engine->outputInfo() : std::nullopt;
+  if (!output.has_value()) {
+    ImGui::TextDisabled("Display modes unavailable");
+  } else {
+    ImGui::TextDisabled("%s", output->name.c_str());
+    ImGui::TextDisabled("%dx%d @ %.0f Hz", output->width, output->height,
+                        output->refresh / 1000.0f);
+
+    if (!output->modes.empty()) {
+      auto modeLabel = [](const Engine::OutputModeInfo& mode) {
+        char buffer[64];
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%dx%d @ %.0f Hz%s",
+                      mode.width,
+                      mode.height,
+                      mode.refresh / 1000.0f,
+                      mode.preferred ? " (preferred)" : "");
+        return std::string(buffer);
+      };
+      static int selectedMode = 0;
+      if (!ImGui::IsAnyItemActive() && output->currentMode >= 0) {
+        selectedMode = output->currentMode;
+      }
+      selectedMode = std::clamp(selectedMode, 0,
+                                static_cast<int>(output->modes.size()) - 1);
+      ImGui::TextUnformatted("Resolution");
+      ImGui::SetNextItemWidth(-1.0f);
+      if (ImGui::BeginCombo("##mode", modeLabel(output->modes[selectedMode]).c_str())) {
+        for (int i = 0; i < static_cast<int>(output->modes.size()); ++i) {
+          const bool selected = (i == selectedMode);
+          if (ImGui::Selectable(modeLabel(output->modes[i]).c_str(), selected)) {
+            selectedMode = i;
+          }
+          if (selected) {
+            ImGui::SetItemDefaultFocus();
+          }
+        }
+        ImGui::EndCombo();
+      }
+      static std::string displayError;
+      if (ImGui::Button("Apply resolution", ImVec2(-1.0f, 0.0f))) {
+        const int oldMode = output->currentMode;
+        if (engine->setOutputMode(selectedMode)) {
+          displayError.clear();
+          displayOldMode = oldMode;
+          displayNewMode = selectedMode;
+          displayConfirmDeadline = now + 10.0;
+          displayConfirmOpen = true;
+        } else {
+          displayError = "Mode rejected by the output";
+        }
+      }
+      if (!displayError.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                           "%s",
+                           displayError.c_str());
+      }
+    } else {
+      ImGui::TextDisabled("No modes reported");
+    }
+
+    static float scaleUi = 1.0f;
+    if (!ImGui::IsAnyItemActive()) {
+      scaleUi = output->scale;
+    }
+    slider("Scale", &scaleUi, 0.5f, 3.0f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      engine->setOutputScale(scaleUi);
+    }
+  }
+
+  ImGui::Separator();
+  ImGui::TextUnformatted("HackMatrix");
+  ImGui::Separator();
+  Camera* camera = engine ? engine->getCamera() : nullptr;
+  if (camera) {
+    static float fovUi = 45.0f;
+    if (!ImGui::IsAnyItemActive()) {
+      fovUi = camera->getFovDegrees();
+    }
+    slider("FOV", &fovUi, 30.0f, 110.0f, "%.0f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      camera->setFovDegrees(fovUi);
+      persistFloat("fov", fovUi);
+    }
+
+    static float farUi = 400.0f;
+    if (!ImGui::IsAnyItemActive()) {
+      farUi = camera->getFarPlane();
+    }
+    slider("Draw distance", &farUi, 20.0f, 1000.0f, "%.0f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      camera->setFarPlane(farUi);
+      persistFloat("zFar", farUi);
+    }
+
+    static float sensitivityUi = 0.1f;
+    if (!ImGui::IsAnyItemActive()) {
+      sensitivityUi = camera->getLookSensitivity();
+    }
+    slider("Mouse sensitivity", &sensitivityUi, 0.01f, 0.5f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      camera->setLookSensitivity(sensitivityUi);
+      persistFloat("mouse_sensitivity", sensitivityUi);
+    }
+
+    static float speedUi = 0.03f;
+    if (!ImGui::IsAnyItemActive()) {
+      speedUi = camera->getCameraSpeed();
+    }
+    slider("Camera speed", &speedUi, 0.005f, 0.2f, "%.3f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      camera->setCameraSpeed(speedUi);
+      persistFloat("camera_speed", speedUi);
+    }
+  }
+
+  if (auto* controls = engine ? engine->getControls() : nullptr) {
+    static float flopUi = 0.25f;
+    if (!ImGui::IsAnyItemActive()) {
+      flopUi = controls->getWindowFlop();
+    }
+    slider("Window animation (s)", &flopUi, 0.01f, 1.0f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      controls->setWindowFlop(flopUi);
+      persistFloat("window_flop", flopUi);
+    }
+  }
+}
+
+void
+EngineGui::renderDisplayConfirm()
+{
+  if (!displayConfirmOpen) {
+    return;
+  }
+  const double now = nowSeconds();
+  const double remaining = displayConfirmDeadline - now;
+  if (remaining <= 0.0) {
+    if (engine && displayOldMode >= 0) {
+      engine->setOutputMode(displayOldMode);
+    }
+    displayConfirmOpen = false;
+    return;
+  }
+
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(
+    ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+           viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
+    ImGuiCond_Always,
+    ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(340.0f, 0.0f), ImGuiCond_Always);
+  ImGui::Begin("Keep display mode?",
+               nullptr,
+               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_AlwaysAutoResize);
+  ImGui::TextUnformatted("Keep this display mode?");
+  ImGui::Text("Reverting in %.1f s", remaining);
+  ImGui::TextDisabled("Enter = Keep, Esc = Revert");
+  ImGui::Spacing();
+
+  const bool keep = ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+  if (keep || ImGui::Button("Keep", ImVec2(100.0f, 0.0f))) {
+    displayConfirmOpen = false;
+    ImGui::End();
+    return;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Revert", ImVec2(100.0f, 0.0f)) ||
+      ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (engine && displayOldMode >= 0) {
+      engine->setOutputMode(displayOldMode);
+    }
+    displayConfirmOpen = false;
+  }
+  ImGui::End();
 }
 
 void

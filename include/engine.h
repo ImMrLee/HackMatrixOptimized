@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <spdlog/common.h>
 #include <string>
 #include <vector>
@@ -29,6 +30,32 @@ struct EngineOptions {
 
 class Engine
 {
+public:
+  // Display controls are provided by the wlroots server (primary output).
+  struct OutputModeInfo
+  {
+    int width = 0;
+    int height = 0;
+    int refresh = 0; // mHz
+    bool preferred = false;
+  };
+  struct OutputInfo
+  {
+    std::string name;
+    std::string description;
+    int width = 0;
+    int height = 0;
+    int refresh = 0; // mHz
+    float scale = 1.0f;
+    bool enabled = false;
+    int currentMode = -1;
+    std::vector<OutputModeInfo> modes;
+  };
+  using OutputInfoProvider = std::function<std::optional<OutputInfo>()>;
+  using OutputModeSetter = std::function<bool(int)>;
+  using OutputScaleSetter = std::function<bool(float)>;
+
+private:
   std::unique_ptr<World> world;
   std::unique_ptr<Api> api;
   std::unique_ptr<Renderer> renderer;
@@ -79,6 +106,9 @@ class Engine
   std::function<void()> imguiOverlay_;
   std::function<void(std::uint32_t, bool)> keyInjector_;
   std::function<bool(std::uint32_t, bool)> pointerInjector_;
+  OutputInfoProvider outputInfoProvider_;
+  OutputModeSetter outputModeSetter_;
+  OutputScaleSetter outputScaleSetter_;
 
 public:
   Engine(char** envp, EngineOptions options = {});
@@ -90,6 +120,28 @@ public:
   bool isExitConfirmOpen() const
   {
     return engineGui && engineGui->isExitConfirmOpen();
+  }
+  bool isDisplayConfirmOpen() const;
+
+  void setOutputControl(OutputInfoProvider info,
+                        OutputModeSetter mode,
+                        OutputScaleSetter scale)
+  {
+    outputInfoProvider_ = std::move(info);
+    outputModeSetter_ = std::move(mode);
+    outputScaleSetter_ = std::move(scale);
+  }
+  std::optional<OutputInfo> outputInfo() const
+  {
+    return outputInfoProvider_ ? outputInfoProvider_() : std::nullopt;
+  }
+  bool setOutputMode(int index)
+  {
+    return outputModeSetter_ ? outputModeSetter_(index) : false;
+  }
+  bool setOutputScale(float scale)
+  {
+    return outputScaleSetter_ ? outputScaleSetter_(scale) : false;
   }
   Camera* getCamera() { return camera.get(); }
   Renderer* getRenderer() { return renderer.get(); }

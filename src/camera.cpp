@@ -7,6 +7,7 @@
 #include <glad/glad.h>
 #include <memory>
 #include "Config.h"
+#include <algorithm>
 #include <chrono>
 #include "time_utils.h"
 
@@ -36,6 +37,10 @@ Camera::Camera()
   zNear = 0.02f;
   auto yFovDegs = Config::singleton()->get<float>("fov");
   yFov = glm::radians(yFovDegs);
+  lookSensitivity =
+    Config::singleton()->get_or<float>("mouse_sensitivity", 0.1f);
+  cameraSpeed =
+    Config::singleton()->get_or<float>("camera_speed", DEFAULT_CAMERA_SPEED);
   projectionAspect =
     SCREEN_HEIGHT > 0.0f ? (SCREEN_WIDTH / SCREEN_HEIGHT) : (800.0f / 600.0f);
   projectionMatrix = glm::perspective(yFov, projectionAspect, zNear, zFar);
@@ -88,9 +93,8 @@ void
 Camera::handleRotateForce(double xoffset, double yoffset)
 {
 
-  float sensitivity = 0.1f;
-  xoffset *= sensitivity;
-  yoffset *= sensitivity;
+  xoffset *= lookSensitivity;
+  yoffset *= lookSensitivity;
   yaw += xoffset;
   pitch += yoffset;
   if (pitch > 89.0f)
@@ -235,6 +239,48 @@ void Camera::changeSpeed(float delta) {
 
 void Camera::resetSpeed() {
   cameraSpeed = DEFAULT_CAMERA_SPEED;
+}
+
+void
+Camera::setFovDegrees(float degrees)
+{
+  yFov = glm::radians(std::clamp(degrees, 15.0f, 150.0f));
+  _projectionMatrixUpdated = true;
+  viewUpdated = true;
+}
+
+float
+Camera::getFovDegrees() const
+{
+  return glm::degrees(yFov);
+}
+
+void
+Camera::setFarPlane(float far)
+{
+  zFar = std::max(1.0f, far);
+  _projectionMatrixUpdated = true;
+  viewUpdated = true;
+}
+
+float
+Camera::getFarPlane() const
+{
+  return zFar;
+}
+
+void
+Camera::setLookSensitivity(float sensitivity)
+{
+  lookSensitivity = std::clamp(sensitivity, 0.01f, 2.0f);
+}
+
+void
+Camera::setCameraSpeed(float speed)
+{
+  if (speed > 0.0f) {
+    cameraSpeed = speed;
+  }
 }
 
 Ray createMouseRay(float mouseX, float mouseY, float screenWidth, float screenHeight, 

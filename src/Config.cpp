@@ -4,6 +4,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 
 namespace fs = std::filesystem;
@@ -128,7 +129,7 @@ Config::get_keys(const std::string& key_path)
 }
 
 void
-Config::setIntAndSave(const std::string& key, int value)
+Config::setScalarAndSave(const std::string& key, const std::string& value)
 {
   if (configPath.empty()) {
     throw std::runtime_error("HackMatrix config path is empty");
@@ -152,13 +153,13 @@ Config::setIntAndSave(const std::string& key, int value)
       trimmed.erase(0, first);
     }
     if (!replaced && trimmed.rfind(prefix, 0) == 0) {
-      line = key + ": " + std::to_string(value);
+      line = key + ": " + value;
       replaced = true;
     }
     lines.push_back(line);
   }
   if (!replaced) {
-    lines.push_back(key + ": " + std::to_string(value));
+    lines.push_back(key + ": " + value);
   }
 
   fs::path temporary = path;
@@ -180,6 +181,20 @@ Config::setIntAndSave(const std::string& key, int value)
     throw std::runtime_error("Unable to replace HackMatrix config: " +
                              path.string());
   }
+}
 
+void
+Config::setIntAndSave(const std::string& key, int value)
+{
+  setScalarAndSave(key, std::to_string(value));
+  config[key] = value;
+}
+
+void
+Config::setFloatAndSave(const std::string& key, float value)
+{
+  std::ostringstream ss;
+  ss << value;
+  setScalarAndSave(key, ss.str());
   config[key] = value;
 }

@@ -14,6 +14,8 @@
 #include "world.h"
 #include "WindowManager/WindowManager.h"
 #include "ControlMappings.h"
+#include "Config.h"
+#include <algorithm>
 
 class TypedKeyOverlay;
 
@@ -169,6 +171,7 @@ public:
     , registry(registry)
   {
     lastWaylandFocusActive = false;
+    windowFlop = Config::singleton()->get_or<float>("window_flop", windowFlop);
   }
   void poll();
   void pollPressedKeys();
@@ -250,6 +253,11 @@ public:
   // True in first-person/free-look mode: the cursor is hidden and the
   // crosshair at the screen centre aims at windows and the world.
   bool isCursorGrabbed() const { return grabbedCursor; }
+  float getWindowFlop() const { return windowFlop; }
+  void setWindowFlop(float seconds)
+  {
+    windowFlop = std::clamp(seconds, 0.01f, 2.0f);
+  }
   void disableKeys();
   void enableKeys();
   void triggerScreenshot();

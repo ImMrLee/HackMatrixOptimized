@@ -12,6 +12,7 @@ class Config
 private:
   fkyaml::node config;
   std::string configPath;
+  void setScalarAndSave(const std::string& key, const std::string& value);
 
 public:
   static std::shared_ptr<Config> singleton();
@@ -59,6 +60,7 @@ public:
   // Rewrites a flat integer key in config.yaml (preserving the rest of the
   // file) and updates the in-memory node.
   void setIntAndSave(const std::string& key, int value);
+  void setFloatAndSave(const std::string& key, float value);
 
   std::vector<std::string> get_keys(const std::string& key_path);
 };

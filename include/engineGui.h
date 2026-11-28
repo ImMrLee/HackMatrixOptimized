@@ -9,6 +9,7 @@
 
 #include "logger.h"
 #include "entity.h"
+#include "system_settings.h"
 
 using namespace std;
 
@@ -36,6 +37,17 @@ class EngineGui
   float menuAnim = 0.0f;
   void renderMenu(MultiPlayer::Gui& gui, float fps);
 
+  // System Config tab (audio / display / HackMatrix-specific settings).
+  SystemSettings systemSettings_;
+  void renderSystemConfig();
+
+  // Display mode changes are applied with a 10s keep/revert confirmation.
+  bool displayConfirmOpen = false;
+  int displayOldMode = -1;
+  int displayNewMode = -1;
+  double displayConfirmDeadline = 0.0;
+  void renderDisplayConfirm();
+
   // Multiplayer chat overlay (T to open, Enter send, Esc close).
   bool chatOpen = false;
   bool chatJustOpened = false;
@@ -54,6 +66,7 @@ class EngineGui
 public:
   bool isChatOpen() const { return chatOpen; }
   bool isExitConfirmOpen() const { return exitConfirmOpen; }
+  bool isDisplayConfirmOpen() const { return displayConfirmOpen; }
   void openExitConfirm()
   {
     exitConfirmOpen = true;

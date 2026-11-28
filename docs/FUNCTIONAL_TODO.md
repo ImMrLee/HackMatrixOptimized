@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-28：**System Config 标签页（音频 / 显示 / HackMatrix）**：
+  - 音频：音量 slider、静音，按 `wpctl` → `pactl` → `amixer` 回退；无 server 时显示明确状态；
+  - 显示：亮度（sysfs，直接写失败时回退 `brightnessctl` / logind `SetBrightness`）、分辨率/刷新、缩放；
+  - 分辨率切换先在下一帧开头应用（避免渲染中嵌套 commit），随后弹出 10 秒 Keep/Revert 确认，超时自动回滚；
+  - HackMatrix：FOV、可视距离 `zFar`、鼠标灵敏度、相机速度、窗口动画；修改写回 `config.yaml`（`fov`/`zFar`/`mouse_sensitivity`/`camera_speed`/`window_flop`）；
+  - `HACKMATRIX_IMGUI_SYSTEM_TAB=1` 自动打开并选中本页；单测 97/97 通过。
+
 - 2026-11-28：**HackMatrix 菜单改为左侧可收起侧边栏**：
   - 默认隐藏；屏幕左侧边缘有竖直长条 + 箭头，`F` 呼出鼠标后点击，面板以约 0.16s 动画从左侧滑出，占输出宽度约 1/5；再次点击长条或点面板右上角 `<<` 收起；
   - 保留原有 FPS / Debug Log / Entity Editor / Multiplayer tabs；窄宽度下 tab bar 使用滚动而不是截断标签；

@@ -231,6 +231,51 @@ ensure_depth_buffer(WlrOutputHandle* handle, int width, int height, GLuint fbo)
   }
 }
 
+static void
+applyPendingOutputState(WlrServer* server)
+{
+  if (server == nullptr || server->primary_output == nullptr) {
+    return;
+  }
+  wlr_output* output = server->primary_output;
+
+  if (server->pendingOutputMode) {
+    const int index = server->pendingOutputModeIndex;
+    server->pendingOutputMode = false;
+    wlr_output_mode* selected = nullptr;
+    wlr_output_mode* mode = nullptr;
+    int current = 0;
+    wl_list_for_each(mode, &output->modes, link) {
+      if (current++ == index) {
+        selected = mode;
+        break;
+      }
+    }
+    if (selected != nullptr) {
+      wlr_output_state state;
+      wlr_output_state_init(&state);
+      wlr_output_state_set_enabled(&state, true);
+      wlr_output_state_set_mode(&state, selected);
+      if (!wlr_output_commit_state(output, &state)) {
+        wlr_log(WLR_ERROR, "Failed to apply output mode index %d", index);
+      }
+      wlr_output_state_finish(&state);
+    }
+  }
+
+  if (server->pendingOutputScale) {
+    const float scale = server->pendingOutputScaleValue;
+    server->pendingOutputScale = false;
+    wlr_output_state state;
+    wlr_output_state_init(&state);
+    wlr_output_state_set_scale(&state, scale);
+    if (!wlr_output_commit_state(output, &state)) {
+      wlr_log(WLR_ERROR, "Failed to apply output scale %.2f", scale);
+    }
+    wlr_output_state_finish(&state);
+  }
+}
+
 void
 handle_output_frame(wl_listener* listener, void* data)
 {
@@ -238,6 +283,10 @@ handle_output_frame(wl_listener* listener, void* data)
   auto* handle =
     wl_container_of(listener, static_cast<WlrOutputHandle*>(nullptr), frame);
   auto* server = handle->server;
+
+  // Apply queued mode/scale changes before acquiring this frame's buffer so we
+  // never commit the output in the middle of a render pass.
+  applyPendingOutputState(server);
 
   struct wlr_output_state output_state;
   wlr_output_state_init(&output_state);
@@ -331,6 +380,56 @@ handle_output_frame(wl_listener* listener, void* data)
           server->pointer_x = server->cursor->x;
           server->pointer_y = server->cursor->y;
         });
+      }
+      // Expose the primary output's modes/scale to the System Config tab.
+      if (server->primary_output) {
+        wlr_output* output = server->primary_output;
+        server->engine->setOutputControl(
+          [output]() -> std::optional<Engine::OutputInfo> {
+            if (output == nullptr) {
+              return std::nullopt;
+            }
+            Engine::OutputInfo info;
+            info.name = output->name ? output->name : "";
+            info.description =
+              output->description ? output->description : "";
+            info.width = output->width;
+            info.height = output->height;
+            info.refresh = output->refresh;
+            info.scale = output->scale;
+            info.enabled = output->enabled;
+            int index = 0;
+            wlr_output_mode* mode = nullptr;
+            wl_list_for_each(mode, &output->modes, link) {
+              info.modes.push_back(
+                Engine::OutputModeInfo{ mode->width,
+                                        mode->height,
+                                        mode->refresh,
+                                        mode->preferred });
+              if (mode == output->current_mode) {
+                info.currentMode = index;
+              }
+              ++index;
+            }
+            return info;
+          },
+          [server](int index) -> bool {
+            if (server->primary_output == nullptr || index < 0) {
+              return false;
+            }
+            // Applied at the start of the next output frame.
+            server->pendingOutputMode = true;
+            server->pendingOutputModeIndex = index;
+            return true;
+          },
+          [server](float scale) -> bool {
+            if (server->primary_output == nullptr || scale <= 0.0f) {
+              return false;
+            }
+            server->pendingOutputScale = true;
+            server->pendingOutputScaleValue = scale;
+            return true;
+          });
       }
       // KEY_REPLAY / remote control typing: map a keysym back to a keycode on
       // the active keymap and deliver it through the seat (and IME grab).
@@ -442,6 +541,7 @@ handle_output_frame(wl_listener* listener, void* data)
       }
       if (!windowManipulated && !pointerVisible &&
           !server->engine->isExitConfirmOpen() &&
+          !server->engine->isDisplayConfirmOpen() &&
           (server->input.delta_x != 0.0 || server->input.delta_y != 0.0)) {
         if (controls) {
           controls->applyLookDelta(server->input.delta_x, -server->input.delta_y);
