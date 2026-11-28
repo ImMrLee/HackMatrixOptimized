@@ -79,7 +79,7 @@ HackMatrix 使用 `wofi`.
 
 你可以用这个菜单查看/修改/增删模型（HackMatrix 的游戏引擎哲学喵~）、查看日志，或进入 Multiplayer 面板。
 
-`System Config` 页可以调音量/静音、亮度、分辨率和缩放，以及 FOV、可视距离、鼠标灵敏度、相机速度、窗口动画等 HackMatrix 参数。分辨率切换后会弹出 10 秒确认框，不确认会自动回滚。
+`System Config` 页可以调音量/静音、屏幕亮度，以及 FOV、可视距离、鼠标灵敏度、相机速度、窗口动画等 HackMatrix 参数。
 
 找到 Entity Editor
 

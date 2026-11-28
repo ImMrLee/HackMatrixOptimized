@@ -388,18 +388,11 @@ Engine::frame()
 
 void
 Engine::disableKeysIfImguiActive() {
-  if (ImGui::IsAnyItemActive() || isChatOpen() || isExitConfirmOpen() ||
-      isDisplayConfirmOpen()) {
+  if (ImGui::IsAnyItemActive() || isChatOpen() || isExitConfirmOpen()) {
     controls->disableKeys();
   } else {
     controls->enableKeys();
   }
-}
-
-bool
-Engine::isDisplayConfirmOpen() const
-{
-  return engineGui && engineGui->isDisplayConfirmOpen();
 }
 
 void

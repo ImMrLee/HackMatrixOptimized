@@ -87,8 +87,7 @@ Multiplayer
 
 - 2026-11-28：**System Config 标签页（音频 / 显示 / HackMatrix）**：
   - 音频：音量 slider、静音，按 `wpctl` → `pactl` → `amixer` 回退；无 server 时显示明确状态；
-  - 显示：亮度（sysfs，直接写失败时回退 `brightnessctl` / logind `SetBrightness`）、分辨率/刷新、缩放；
-  - 分辨率切换先在下一帧开头应用（避免渲染中嵌套 commit），随后弹出 10 秒 Keep/Revert 确认，超时自动回滚；
+  - 显示：亮度（sysfs，直接写失败时回退 `brightnessctl` / logind `SetBrightness`）；
   - HackMatrix：FOV、可视距离 `zFar`、鼠标灵敏度、相机速度、窗口动画；修改写回 `config.yaml`（`fov`/`zFar`/`mouse_sensitivity`/`camera_speed`/`window_flop`）；
   - `HACKMATRIX_IMGUI_SYSTEM_TAB=1` 自动打开并选中本页；单测 97/97 通过。
 

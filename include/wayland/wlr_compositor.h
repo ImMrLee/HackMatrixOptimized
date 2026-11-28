@@ -226,13 +226,6 @@ struct WlrServer {
   wlr_virtual_keyboard_manager_v1* virtual_keyboard_manager = nullptr;
   std::unique_ptr<ImeRelay> ime;
   wlr_output* primary_output = nullptr;
-  // Output mode/scale changes requested by the System Config tab are queued
-  // and applied at the start of the next output frame, never inside the
-  // current render pass.
-  bool pendingOutputMode = false;
-  int pendingOutputModeIndex = -1;
-  bool pendingOutputScale = false;
-  float pendingOutputScaleValue = 1.0f;
   wlr_input_device* last_keyboard_device = nullptr;
   wlr_input_device* last_pointer_device = nullptr;
   wlr_keyboard* virtual_keyboard = nullptr;

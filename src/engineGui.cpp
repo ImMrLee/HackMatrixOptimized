@@ -17,7 +17,6 @@
 #include "persister.h"
 #include "string"
 #include <algorithm>
-#include <cstdio>
 #include <functional>
 #include <optional>
 #include <string>
@@ -110,7 +109,6 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
 
   renderChat();
   renderExitConfirm();
-  renderDisplayConfirm();
 
   // Free-look crosshair: the centre ray is what clicks and R aim with, so show
   // it whenever the cursor is grabbed and no window owns the input.
@@ -422,78 +420,6 @@ EngineGui::renderSystemConfig()
     }
   }
 
-  auto output = engine ? engine->outputInfo() : std::nullopt;
-  if (!output.has_value()) {
-    ImGui::TextDisabled("Display modes unavailable");
-  } else {
-    ImGui::TextDisabled("%s", output->name.c_str());
-    ImGui::TextDisabled("%dx%d @ %.0f Hz", output->width, output->height,
-                        output->refresh / 1000.0f);
-
-    if (!output->modes.empty()) {
-      auto modeLabel = [](const Engine::OutputModeInfo& mode) {
-        char buffer[64];
-        std::snprintf(buffer,
-                      sizeof(buffer),
-                      "%dx%d @ %.0f Hz%s",
-                      mode.width,
-                      mode.height,
-                      mode.refresh / 1000.0f,
-                      mode.preferred ? " (preferred)" : "");
-        return std::string(buffer);
-      };
-      static int selectedMode = 0;
-      if (!ImGui::IsAnyItemActive() && output->currentMode >= 0) {
-        selectedMode = output->currentMode;
-      }
-      selectedMode = std::clamp(selectedMode, 0,
-                                static_cast<int>(output->modes.size()) - 1);
-      ImGui::TextUnformatted("Resolution");
-      ImGui::SetNextItemWidth(-1.0f);
-      if (ImGui::BeginCombo("##mode", modeLabel(output->modes[selectedMode]).c_str())) {
-        for (int i = 0; i < static_cast<int>(output->modes.size()); ++i) {
-          const bool selected = (i == selectedMode);
-          if (ImGui::Selectable(modeLabel(output->modes[i]).c_str(), selected)) {
-            selectedMode = i;
-          }
-          if (selected) {
-            ImGui::SetItemDefaultFocus();
-          }
-        }
-        ImGui::EndCombo();
-      }
-      static std::string displayError;
-      if (ImGui::Button("Apply resolution", ImVec2(-1.0f, 0.0f))) {
-        const int oldMode = output->currentMode;
-        if (engine->setOutputMode(selectedMode)) {
-          displayError.clear();
-          displayOldMode = oldMode;
-          displayNewMode = selectedMode;
-          displayConfirmDeadline = now + 10.0;
-          displayConfirmOpen = true;
-        } else {
-          displayError = "Mode rejected by the output";
-        }
-      }
-      if (!displayError.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
-                           "%s",
-                           displayError.c_str());
-      }
-    } else {
-      ImGui::TextDisabled("No modes reported");
-    }
-
-    static float scaleUi = 1.0f;
-    if (!ImGui::IsAnyItemActive()) {
-      scaleUi = output->scale;
-    }
-    slider("Scale", &scaleUi, 0.5f, 3.0f, "%.2f");
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-      engine->setOutputScale(scaleUi);
-    }
-  }
-
   ImGui::Separator();
   ImGui::TextUnformatted("HackMatrix");
   ImGui::Separator();
@@ -551,56 +477,6 @@ EngineGui::renderSystemConfig()
       persistFloat("window_flop", flopUi);
     }
   }
-}
-
-void
-EngineGui::renderDisplayConfirm()
-{
-  if (!displayConfirmOpen) {
-    return;
-  }
-  const double now = nowSeconds();
-  const double remaining = displayConfirmDeadline - now;
-  if (remaining <= 0.0) {
-    if (engine && displayOldMode >= 0) {
-      engine->setOutputMode(displayOldMode);
-    }
-    displayConfirmOpen = false;
-    return;
-  }
-
-  ImGuiViewport* viewport = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(
-    ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
-           viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
-    ImGuiCond_Always,
-    ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(340.0f, 0.0f), ImGuiCond_Always);
-  ImGui::Begin("Keep display mode?",
-               nullptr,
-               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                 ImGuiWindowFlags_AlwaysAutoResize);
-  ImGui::TextUnformatted("Keep this display mode?");
-  ImGui::Text("Reverting in %.1f s", remaining);
-  ImGui::TextDisabled("Enter = Keep, Esc = Revert");
-  ImGui::Spacing();
-
-  const bool keep = ImGui::IsKeyPressed(ImGuiKey_Enter, false);
-  if (keep || ImGui::Button("Keep", ImVec2(100.0f, 0.0f))) {
-    displayConfirmOpen = false;
-    ImGui::End();
-    return;
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Revert", ImVec2(100.0f, 0.0f)) ||
-      ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-    if (engine && displayOldMode >= 0) {
-      engine->setOutputMode(displayOldMode);
-    }
-    displayConfirmOpen = false;
-  }
-  ImGui::End();
 }
 
 void

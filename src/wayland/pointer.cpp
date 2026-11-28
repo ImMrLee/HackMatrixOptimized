@@ -1047,8 +1047,7 @@ handle_pointer_motion(wl_listener* listener, void* data)
     }
   }
   if (handle->server->engine &&
-      (handle->server->engine->isExitConfirmOpen() ||
-       handle->server->engine->isDisplayConfirmOpen())) {
+      handle->server->engine->isExitConfirmOpen()) {
     // The exit dialog owns input; do not move hover focus or the camera.
     return;
   }
@@ -1162,8 +1161,7 @@ handle_pointer_motion_abs(wl_listener* listener, void* data)
     }
   }
   if (handle->server->engine &&
-      (handle->server->engine->isExitConfirmOpen() ||
-       handle->server->engine->isDisplayConfirmOpen())) {
+      handle->server->engine->isExitConfirmOpen()) {
     // The exit dialog owns input; do not move hover focus or the camera.
     return;
   }
@@ -1345,8 +1343,7 @@ inject_pointer_button(WlrServer* server,
     imgui_captured = engine->imguiWantsMouse() && !freeLook;
   }
 
-  if (server->engine && (server->engine->isExitConfirmOpen() ||
-                         server->engine->isDisplayConfirmOpen())) {
+  if (server->engine && server->engine->isExitConfirmOpen()) {
     // ImGui already received the click above; swallow the rest so the scene
     // behind the dialog cannot be operated.
     return true;
