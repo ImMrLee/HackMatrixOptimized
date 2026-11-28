@@ -90,6 +90,10 @@ class EngineGui
   void drawSceneSelectionOverlay(const ImVec2& clipMin, const ImVec2& clipMax);
   entt::entity duplicateEntity(entt::entity source);
 
+  // Scene Editor camera navigation: WASD moves, middle-drag looks around.
+  bool sceneCameraDragActive = false;
+  void handleSceneCameraInput(const ImVec2& mouse, bool mouseInView);
+
   // Translate gizmo: three screen-space axis handles at the selected
   // Positionable. Edits are applied locally while dragging and committed to
   // the network on release.

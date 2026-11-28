@@ -86,7 +86,8 @@ Multiplayer
 ## 完成记录
 
 - 2026-11-28：**Scene Editor 完整编辑能力**：
-  - 变换 gizmo 扩展为 Move / Rotate / Scale（`W/E/R`）：平移沿三轴，旋转显示三个世界轴圆环，缩放使用轴端方块；拖动期间只改本地 `Positionable` 并 `damage()`，松手提交网络编辑；
+  - 变换 gizmo 扩展为 Move / Rotate / Scale（`Alt+W/E/R`，纯 `WASD` 留给相机）：平移沿三轴，旋转显示三个世界轴圆环，缩放使用轴端方块；拖动期间只改本地 `Positionable` 并 `damage()`，松手提交网络编辑；
+  - 场景视口支持 `WASD` 移动相机、按住鼠标中键拖动视角；移动/视角输入在文本输入框或弹出菜单打开时自动让位；
   - Outliner 支持 `Ctrl` 多选、拖拽 reparent（防止自引用/环）、右键 Unparent；Delete 级联删除子实体并清理 Parent 引用；
   - 多选拖动平移会同时移动选中实体及其后代；旋转/缩放对选中实体逐个应用；
   - 增加 Undo / Redo（工具栏 + `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y`），覆盖 gizmo 变换和 reparent；

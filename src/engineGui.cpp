@@ -838,6 +838,7 @@ EngineGui::setSceneEditorOpen(bool open)
     sceneGizmoHoverAxis = -1;
     sceneGizmoDragAxis = -1;
     sceneGizmoEntity = entt::null;
+    sceneCameraDragActive = false;
     if (controls) {
       controls->beginPointerMode();
     }
@@ -850,6 +851,7 @@ EngineGui::setSceneEditorOpen(bool open)
       world->setSimulationPaused(false);
     }
     sceneGizmoHoverAxis = -1;
+    sceneCameraDragActive = false;
     sceneAddComponentOpen = false;
     sceneAddComponentEntity = entt::null;
     if (controls) {
@@ -1301,7 +1303,7 @@ EngineGui::renderSceneToolbar(const ImVec2& pos, const ImVec2& size)
                                 : (sceneGizmoMode == SceneGizmoMode::Scale
                                      ? "scale"
                                      : "move");
-    ImGui::TextDisabled("| drag X/Y/Z to %s  (W/E/R)", gizmoAction);
+    ImGui::TextDisabled("| drag X/Y/Z to %s", gizmoAction);
   }
   ImGui::End();
   ImGui::PopStyleVar();
@@ -1746,6 +1748,52 @@ EngineGui::renderSceneAssetBrowser(const ImVec2& pos, const ImVec2& size)
   }
   ImGui::EndChild();
   ImGui::End();
+}
+
+void
+EngineGui::handleSceneCameraInput(const ImVec2& mouse, bool mouseInView)
+{
+  auto* camera = engine ? engine->getCamera() : nullptr;
+  if (!camera) {
+    sceneCameraDragActive = false;
+    return;
+  }
+
+  const ImGuiIO& io = ImGui::GetIO();
+  const bool popupOpen =
+    ImGui::IsPopupOpen("",
+                       ImGuiPopupFlags_AnyPopupId |
+                         ImGuiPopupFlags_AnyPopupLevel);
+  const bool textInput = ImGui::IsAnyItemActive() || io.WantTextInput;
+
+  // WASD pans the camera. Keep it disabled while typing or navigating a popup.
+  if (!popupOpen && !textInput && !io.KeyAlt) {
+    const bool forward = ImGui::IsKeyDown(ImGuiKey_W);
+    const bool back = ImGui::IsKeyDown(ImGuiKey_S);
+    const bool left = ImGui::IsKeyDown(ImGuiKey_A);
+    const bool right = ImGui::IsKeyDown(ImGuiKey_D);
+    if (forward || back || left || right) {
+      camera->handleTranslateForce(forward, back, left, right, false, false);
+    }
+  }
+
+  if (sceneCameraDragActive) {
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+      sceneCameraDragActive = false;
+      return;
+    }
+    if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) {
+      // Match free-look: screen Y is top-down, camera pitch is world-up.
+      camera->handleRotateForce(io.MouseDelta.x, -io.MouseDelta.y);
+    }
+    return;
+  }
+
+  if (!popupOpen && mouseInView &&
+      ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+    sceneCameraDragActive = true;
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+  }
 }
 
 entt::entity
@@ -2314,7 +2362,8 @@ EngineGui::renderSceneEditor()
     return;
   }
 
-  if (sceneGizmoDragAxis < 0 && !ImGui::IsAnyItemActive()) {
+  if (sceneGizmoDragAxis < 0 && !ImGui::IsAnyItemActive() &&
+      ImGui::GetIO().KeyAlt) {
     if (ImGui::IsKeyPressed(ImGuiKey_W, false)) {
       sceneGizmoMode = SceneGizmoMode::Translate;
     } else if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
@@ -2371,6 +2420,7 @@ EngineGui::renderSceneEditor()
     ImGui::IsPopupOpen("",
                        ImGuiPopupFlags_AnyPopupId |
                          ImGuiPopupFlags_AnyPopupLevel);
+  handleSceneCameraInput(mouse, mouseInView);
   const bool gizmoCaptured =
     !popupOpen && handleSceneGizmoInput(mouse, mouseInView);
   if (!gizmoCaptured && !popupOpen &&
@@ -2383,6 +2433,15 @@ EngineGui::renderSceneEditor()
                             ImVec2(viewRight, viewBottom));
   renderSceneGizmo(ImVec2(viewLeft, sideTop),
                    ImVec2(viewRight, viewBottom));
+
+  ImDrawList* draw = ImGui::GetForegroundDrawList();
+  draw->PushClipRect(ImVec2(viewLeft, sideTop),
+                     ImVec2(viewRight, viewBottom),
+                     true);
+  draw->AddText(ImVec2(viewLeft + 8.0f, sideTop + 24.0f),
+                IM_COL32(210, 220, 235, 190),
+                "WASD move  ·  MMB drag to look  ·  Alt+W/E/R gizmo");
+  draw->PopClipRect();
 }
 
 void
