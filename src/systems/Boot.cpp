@@ -199,21 +199,6 @@ systems::killBootablesOnExit(std::shared_ptr<EntityRegistry> registry)
   registry->saveAll();
 }
 
-std::vector<std::pair<entt::entity, int>>
-systems::getAlreadyBooted(std::shared_ptr<EntityRegistry> registry)
-{
-
-  std::vector<std::pair<entt::entity, int>> rv;
-  auto bootables = registry->view<Bootable>();
-  for (auto [entity, bootable] : bootables.each()) {
-    if (!bootable.killOnExit && bootable.pid.has_value() &&
-        pidIsRunning(bootable.pid.value())) {
-      rv.push_back(std::make_pair(entity, bootable.pid.value()));
-    }
-  }
-  return rv;
-}
-
 void
 systems::resizeBootable(std::shared_ptr<EntityRegistry> registry,
                         entt::entity entity,

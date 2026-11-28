@@ -115,7 +115,7 @@ public:
   void resizeFocusedApp(float factor);
   void menu();
   void launchTerminal();
-  void createAndRegisterApps(char** envp);
+
   WindowManager(shared_ptr<EntityRegistry>, spdlog::sink_ptr, char** envp = nullptr);
   bool isWaylandMode() const { return true; }
   ~WindowManager();

@@ -237,10 +237,6 @@ void WindowManager::launchTerminal() {
   launchNestedProgram(terminalProgram, "terminal");
 }
 
-void WindowManager::createAndRegisterApps(char **envp) {
-  // Native Wayland surfaces register when they map through the compositor.
-}
-
 void
 WindowManager::wire(WindowManagerPtr sharedThis,
                     Camera* camera,

@@ -11,9 +11,6 @@ boot(std::shared_ptr<EntityRegistry> registry,
 void
 bootAll(std::shared_ptr<EntityRegistry> registry, char** envp);
 
-std::vector<std::pair<entt::entity, int>>
-getAlreadyBooted(std::shared_ptr<EntityRegistry> registry);
-
 void killBootablesOnExit(std::shared_ptr<EntityRegistry>);
 void
 resizeBootable(std::shared_ptr<EntityRegistry>,

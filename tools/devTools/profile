@@ -1,3 +1,2 @@
 #!/bin/bash
-
-sudo perf record -g ./matrix
+sudo perf record -g "${1:-./build/matrix}"

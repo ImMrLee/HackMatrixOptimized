@@ -1,5 +1,6 @@
 #include "blocks.h"
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -9,7 +10,10 @@ using namespace blocks;
 shared_ptr<TexturePack>
 blocks::initializeBasicPack()
 {
-  string textureDir = "/home/collin/matrix/block";
+  // Upstream hardcoded the original author's machine here. Use an env override
+  // with a repo-relative default instead.
+  const char* textureDirEnv = std::getenv("HACKMATRIX_BLOCK_TEXTURE_DIR");
+  string textureDir = textureDirEnv != nullptr ? textureDirEnv : "blocks";
   vector<Block> blocks = {
     /*
       Block{1, "stone", "stone.png"},

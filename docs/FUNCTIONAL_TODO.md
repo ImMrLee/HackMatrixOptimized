@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-28：**清理作者机器残留 / 死代码**：
+  - `blocks.cpp` 的 `/home/collin/matrix/block` 改为 `HACKMATRIX_BLOCK_TEXTURE_DIR`（默认 `blocks`）；
+  - 删除空/未使用头文件（`gui.h`、`DirectRenderable.h`、`Backend.h`、`menu_web_server.h`、`objectObserver.h`）、`assets.*`、`bot.cpp`、旧 `mmo/`、`branches/`、`mds/`、`stream/`、`webInclude/`、`config/remmina.pref`、`tools/devTools/reload`；
+  - 移除空的 `createAndRegisterApps`，把 `bootAll` 接回启动流程（`bootOnStartup` 现在真正生效）；删除未使用的 `getAlreadyBooted`；
+  - devTools 去掉 `collin@hackrpg.com` / `DISPLAY=:0` / `./matrix` 等硬编码；停止跟踪 Python `egg-info` / `__pycache__`；
+  - 单测 97/97 通过。
+
 - 2026-11-28：**退出清理 / 仓库止血 / 文档口径**：
   - 退出时先向所有 Wayland 窗口发送 close，再终止 `launchNestedProgram` 启动的 launcher/终端（对 `setsid()` 进程组先 SIGTERM 后 SIGKILL）以及所有 Bootable 子进程（不再只限 `killOnExit=true`），并清空持久化的 pid；实测 `Super+Enter` 启动 `weston-terminal` 后发送 QUIT，进程被清理；
   - README 不再声称 `r` 键 bug 已完全修复；F4 标注为“部分改善，仍可能偶发”；

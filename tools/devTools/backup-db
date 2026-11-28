@@ -1,2 +1,7 @@
 #!/bin/bash
-cp ~/HackMatrix/db/matrix.db ~/matrix.db.bak
+set -euo pipefail
+
+db="${1:-db/matrix.db}"
+dest="${2:-/tmp/matrix.db.bak}"
+cp "$db" "$dest"
+echo "backed up $db -> $dest"

@@ -137,9 +137,9 @@ Engine::Engine(char** envp, EngineOptions options)
   TracyGpuContext;
 
   wire();
-  if (wm) {
-    wm->createAndRegisterApps(envp);
-  }
+  // Launch DB-persisted bootOnStartup apps now that the compositor socket and
+  // window manager exist. (createAndRegisterApps was a no-op leftover.)
+  systems::bootAll(registry, envp);
 }
 
 Engine::~Engine()

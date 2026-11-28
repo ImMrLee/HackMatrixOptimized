@@ -9,6 +9,7 @@ debian-testing-amd64-netinst.iso
 
 **/node_modules
 **/__pycache__/
+**/*.egg-info/
 
 **/*.swp
 

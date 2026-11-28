@@ -1,3 +1,2 @@
 #!/bin/bash
-
-DISPLAY=:0 terminator
+DISPLAY="${DISPLAY:-:0}" "${TERMINAL:-terminator}"
