@@ -42,8 +42,12 @@ Positionable::Positionable(glm::vec3 pos,
 {
 }
 
-Positionable::Positionable(Positionable* p) {
-  Positionable(p->pos, p->origin, p->rotate, p->scale);
+Positionable::Positionable(Positionable* p)
+  : pos(p->pos)
+  , origin(p->origin)
+  , rotate(p->rotate)
+  , scale(p->scale)
+{
 }
 
 void

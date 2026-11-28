@@ -1273,10 +1273,12 @@ Controls::handleKeySym(xkb_keysym_t sym,
     // Quit only on the initial press: the release must be consumed too, but it
     // must not quit after the chat closed on the press (or double-trigger).
     if (is_pressed) {
-      if (typedKeyOverlay) {
+      if (keysEnabled && typedKeyOverlay) {
         typedKeyOverlay->recordKeysym(sym);
       }
-      exitConfirmPending_ = true;
+      if (keysEnabled) {
+        exitConfirmPending_ = true;
+      }
     }
     return key_handled_by_wm();
   }
@@ -1360,43 +1362,62 @@ Controls::takeExitConfirmRequest()
 }
 
 void
-Controls::beginExitDialog()
+Controls::beginPointerMode(bool centerPointer)
 {
-  // In free view the cursor is hidden, so the dialog could not be clicked.
-  // Reveal it while the dialog is open and remember whether to restore.
-  exitDialogRestoreFreeLook_ = grabbedCursor;
-  log_controls("controls: exit dialog begin (restoreFreeLook=%d)\n",
-               exitDialogRestoreFreeLook_ ? 1 : 0);
-  if (!exitDialogRestoreFreeLook_) {
-    return;
+  if (pointerModeRefs_++ == 0) {
+    pointerModeRestoreFreeLook_ = grabbedCursor;
+    log_controls("controls: pointer mode begin (restoreFreeLook=%d)\n",
+                 pointerModeRestoreFreeLook_ ? 1 : 0);
+    if (pointerModeRestoreFreeLook_) {
+      grabbedCursor = false;
+      resetMouse = true;
+      if (wm) {
+        wm->setCursorVisible(true);
+        wm->clearCursorInputFocus();
+      }
+    }
   }
-  grabbedCursor = false;
-  resetMouse = true;
-  if (wm) {
-    wm->setCursorVisible(true);
-    wm->clearCursorInputFocus();
-  }
-  // Put the cursor over the centred dialog instead of wherever it was hiding.
-  if (pointerCenterCallback) {
+  if (centerPointer && pointerCenterCallback) {
     pointerCenterCallback();
   }
 }
 
 void
-Controls::endExitDialog()
+Controls::endPointerMode()
 {
-  log_controls("controls: exit dialog end (restoreFreeLook=%d)\n",
-               exitDialogRestoreFreeLook_ ? 1 : 0);
-  if (!exitDialogRestoreFreeLook_) {
+  if (pointerModeRefs_ <= 0) {
     return;
   }
-  exitDialogRestoreFreeLook_ = false;
+  if (--pointerModeRefs_ > 0) {
+    return;
+  }
+  log_controls("controls: pointer mode end (restoreFreeLook=%d)\n",
+               pointerModeRestoreFreeLook_ ? 1 : 0);
+  if (!pointerModeRestoreFreeLook_) {
+    return;
+  }
+  pointerModeRestoreFreeLook_ = false;
   grabbedCursor = true;
   resetMouse = true;
   if (wm) {
     wm->setCursorVisible(false);
     wm->clearCursorInputFocus();
   }
+}
+
+void
+Controls::beginExitDialog()
+{
+  // Put the cursor over the centred dialog instead of wherever it was hiding.
+  beginPointerMode(true);
+  log_controls("controls: exit dialog begin\n");
+}
+
+void
+Controls::endExitDialog()
+{
+  log_controls("controls: exit dialog end\n");
+  endPointerMode();
 }
 
 bool

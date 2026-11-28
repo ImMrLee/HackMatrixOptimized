@@ -388,7 +388,8 @@ Engine::frame()
 
 void
 Engine::disableKeysIfImguiActive() {
-  if (ImGui::IsAnyItemActive() || isChatOpen() || isExitConfirmOpen()) {
+  if (ImGui::IsAnyItemActive() || isChatOpen() || isExitConfirmOpen() ||
+      isSceneEditorOpen()) {
     controls->disableKeys();
   } else {
     controls->enableKeys();

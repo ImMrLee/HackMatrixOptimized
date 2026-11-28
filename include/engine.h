@@ -92,6 +92,14 @@ public:
   {
     return engineGui && engineGui->isExitConfirmOpen();
   }
+  bool isSceneEditorOpen() const
+  {
+    return engineGui && engineGui->isSceneEditorOpen();
+  }
+  entt::entity getSceneSelection() const
+  {
+    return engineGui ? engineGui->getSceneSelection() : entt::null;
+  }
   Camera* getCamera() { return camera.get(); }
   Renderer* getRenderer() { return renderer.get(); }
   Api* getApi() { return api.get(); }

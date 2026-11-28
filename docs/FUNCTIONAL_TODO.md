@@ -85,6 +85,16 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-28：**Entity Editor 重做为 Scene Editor（Phase 1）**：
+  - 侧边栏入口从 Entity Editor 改为 Scene Editor，编辑器本身以独立面板打开：顶部工具栏 + 左侧 Outliner + 右侧 Inspector，中间保留现有 3D 视野；
+  - Outliner 支持搜索、选中、`Parent.childrenIds` 父子层级显示（带循环/缺失子实体保护），并显示实体类型和稳定 ID；
+  - 工具栏提供 New / Duplicate / Delete / Save / Close；New 会在相机前方创建带 `Positionable` 的实体，Duplicate 复制 Model/Transform/光/门/钥匙/锁/脚本等安全组件（Parent/Bootable 暂不复制）；
+  - Inspector 复用现有组件编辑面板，可增删组件；模型路径改为只读展示，导入/替换留到 Phase 4；
+  - 中间 3D 视野支持点击拾取：用相机射线和实体 `BoundingSphere` 选择最前方的 Model，选中实体在视口内绘制琥珀色包围圈（裁剪到面板之间的视口区域）；点空白处取消选择；
+  - 打开编辑器时自动进入指针模式，关闭时恢复自由视角；编辑器打开期间禁用游戏热键，`Esc` 关闭编辑器而不是弹出退出确认；
+  - 修复 `Positionable(Positionable*)` 复制构造未初始化成员的问题；
+  - `HACKMATRIX_IMGUI_SCENE_EDITOR=1`（可选 `HACKMATRIX_IMGUI_SCENE_SELECT_FIRST=1`）用于无头截图/测试；单测 97/97 通过。
+
 - 2026-11-28：**System Config 标签页（音频 / 显示 / HackMatrix）**：
   - 音频：音量 slider、静音，按 `wpctl` → `pactl` → `amixer` 回退；无 server 时显示明确状态；
   - 显示：亮度（sysfs，直接写失败时回退 `brightnessctl` / logind `SetBrightness`）；

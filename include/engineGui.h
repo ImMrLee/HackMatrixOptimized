@@ -29,7 +29,6 @@ class EngineGui
   bool imguiFlipY = true;
   void addComponentPanel(entt::entity, bool&);
   void renderComponentPanel(entt::entity);
-  void renderEntities();
 
   // Left-edge collapsible sidebar. Hidden by default; the edge tab slides the
   // panel out and it covers about 20% of the output width.
@@ -40,6 +39,23 @@ class EngineGui
   // System Config tab (audio / display / HackMatrix-specific settings).
   SystemSettings systemSettings_;
   void renderSystemConfig();
+
+  // Scene Editor: outliner + inspector dock around the existing 3D viewport.
+  // Phase 1 keeps the runtime data model (Entity/Positionable/components) and
+  // provides selection, creation, duplication, deletion and component editing.
+  bool sceneEditorOpen = false;
+  entt::entity sceneSelection = entt::null;
+  entt::entity sceneAddComponentEntity = entt::null;
+  bool sceneAddComponentOpen = false;
+  char sceneFilter[256] = {};
+  void setSceneEditorOpen(bool open);
+  void renderSceneEditor();
+  void renderSceneToolbar(const ImVec2& pos, const ImVec2& size);
+  void renderSceneOutliner(const ImVec2& pos, const ImVec2& size);
+  void renderSceneInspector(const ImVec2& pos, const ImVec2& size);
+  entt::entity pickSceneEntity(float mouseX, float mouseY);
+  void drawSceneSelectionOverlay(const ImVec2& clipMin, const ImVec2& clipMax);
+  entt::entity duplicateEntity(entt::entity source);
 
   // Multiplayer chat overlay (T to open, Enter send, Esc close).
   bool chatOpen = false;
@@ -59,6 +75,8 @@ class EngineGui
 public:
   bool isChatOpen() const { return chatOpen; }
   bool isExitConfirmOpen() const { return exitConfirmOpen; }
+  bool isSceneEditorOpen() const { return sceneEditorOpen; }
+  entt::entity getSceneSelection() const { return sceneSelection; }
   void openExitConfirm()
   {
     exitConfirmOpen = true;

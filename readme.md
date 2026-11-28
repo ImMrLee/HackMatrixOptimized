@@ -81,7 +81,9 @@ HackMatrix 使用 `wofi`.
 
 `System Config` 页可以调音量/静音、屏幕亮度，以及 FOV、可视距离、鼠标灵敏度、相机速度、窗口动画等 HackMatrix 参数。
 
-找到 Entity Editor
+找到 Scene Editor
+
+Scene Editor 是原来的 Entity Editor 重做版：左侧 `Outliner` 显示场景实体和父子层级，支持搜索与选中；右侧 `Inspector` 编辑选中实体的 Transform 和组件；中间保留 3D 视野，点击模型可直接选取并显示选中包围圈。顶部工具栏提供 New / Duplicate / Delete / Save / Close。拖动 gizmo 和整场景导入在下一步接入。
 
 See the [wiki page](https://github.com/collinalexbell/HackMatrix/wiki/Game-Engine) for more info about the game engine and how to use the editor.
 

@@ -17,10 +17,17 @@
 #include "persister.h"
 #include "string"
 #include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <filesystem>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <cstdlib>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include "Config.h"
 #include "time_utils.h"
 #include "entity.h"
@@ -94,6 +101,25 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
     io.DeltaTime = 1.0f / 60.0f;
   }
   ImGui::NewFrame();
+  // Headless UI tests / screenshots can open the Scene Editor directly.
+  static bool sceneEditorEnvChecked = false;
+  if (!sceneEditorEnvChecked) {
+    sceneEditorEnvChecked = true;
+    if (std::getenv("HACKMATRIX_IMGUI_SCENE_EDITOR") != nullptr) {
+      setSceneEditorOpen(true);
+      // Select the first model so screenshots/tests exercise the Inspector
+      // without synthetic mouse input.
+      if (std::getenv("HACKMATRIX_IMGUI_SCENE_SELECT_FIRST") != nullptr) {
+        for (auto [entity, persistable] :
+             registry->view<Persistable>().each()) {
+          if (registry->any_of<Model>(entity)) {
+            sceneSelection = entity;
+            break;
+          }
+        }
+      }
+    }
+  }
   // ImGui::ShowDemoWindow();
   // ImGui::SetNextWindowSize(ImVec2(120, 5));
   if (frameIndex == 0) {
@@ -106,6 +132,7 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
       fps = 1.0 / fps;
   }
   renderMenu(gui, fps);
+  renderSceneEditor();
 
   renderChat();
   renderExitConfirm();
@@ -249,15 +276,15 @@ EngineGui::renderMenu(MultiPlayer::Gui& gui, float fps)
         }
         ImGui::EndTabItem();
       }
-      if (ImGui::BeginTabItem("Entity Editor")) {
-        if (ImGui::Button("+ Create Entity")) {
-          createNewEntity();
+      if (ImGui::BeginTabItem("Scene Editor")) {
+        if (ImGui::Button("Open Scene Editor", ImVec2(-1.0f, 0.0f))) {
+          setSceneEditorOpen(true);
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Persist All")) {
+        ImGui::TextDisabled("Outliner + Inspector open as panels.");
+        ImGui::TextDisabled("%zu entities", registry->storage<Persistable>().size());
+        if (ImGui::Button("Persist All", ImVec2(-1.0f, 0.0f))) {
           registry->saveAll();
         }
-        renderEntities();
         ImGui::EndTabItem();
       }
       const bool forceSystemTab =
@@ -479,6 +506,663 @@ EngineGui::renderSystemConfig()
   }
 }
 
+namespace {
+
+std::string
+sceneLower(std::string value)
+{
+  std::transform(value.begin(),
+                 value.end(),
+                 value.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
+  return value;
+}
+
+std::string
+sceneEntityLabel(const std::shared_ptr<EntityRegistry>& registry,
+                 entt::entity entity)
+{
+  if (auto* bootable = registry->try_get<Bootable>(entity)) {
+    if (bootable->name.has_value() && !bootable->name->empty()) {
+      return bootable->name.value();
+    }
+    if (!bootable->cmd.empty()) {
+      const std::string name =
+        std::filesystem::path(bootable->cmd).filename().string();
+      if (!name.empty()) {
+        return name;
+      }
+    }
+    return "Application";
+  }
+  if (auto* model = registry->try_get<Model>(entity)) {
+    if (!model->path.empty()) {
+      const std::string name =
+        std::filesystem::path(model->path).filename().string();
+      if (!name.empty()) {
+        return name;
+      }
+    }
+    return "Model";
+  }
+  if (registry->any_of<Light>(entity)) {
+    return "Light";
+  }
+  if (registry->any_of<Scriptable>(entity)) {
+    return "Script";
+  }
+  return "Entity";
+}
+
+std::string
+sceneEntityTypeTag(const std::shared_ptr<EntityRegistry>& registry,
+                   entt::entity entity)
+{
+  if (registry->any_of<Bootable>(entity)) {
+    return "app";
+  }
+  if (registry->any_of<Model>(entity)) {
+    return "model";
+  }
+  if (registry->any_of<Light>(entity)) {
+    return "light";
+  }
+  if (registry->any_of<Scriptable>(entity)) {
+    return "script";
+  }
+  return "entity";
+}
+
+bool
+sceneEntityMatches(const std::shared_ptr<EntityRegistry>& registry,
+                   entt::entity entity,
+                   int64_t entityId,
+                   const std::string& filterLower)
+{
+  if (filterLower.empty()) {
+    return true;
+  }
+
+  std::string haystack = sceneEntityLabel(registry, entity) + " " +
+                         sceneEntityTypeTag(registry, entity) + " " +
+                         std::to_string(entityId);
+  if (auto* model = registry->try_get<Model>(entity)) {
+    haystack += " " + model->path + " model mesh";
+  }
+  if (auto* bootable = registry->try_get<Bootable>(entity)) {
+    haystack += " " + bootable->cmd + " " + bootable->args + " app bootable";
+  }
+  if (registry->any_of<Positionable>(entity)) {
+    haystack += " transform positionable";
+  }
+  if (registry->any_of<Light>(entity)) {
+    haystack += " light";
+  }
+  if (registry->any_of<Door>(entity)) {
+    haystack += " door";
+  }
+  if (registry->any_of<Key>(entity)) {
+    haystack += " key";
+  }
+  if (registry->any_of<Lock>(entity)) {
+    haystack += " lock";
+  }
+  if (registry->any_of<Parent>(entity)) {
+    haystack += " parent";
+  }
+  if (registry->any_of<RotateMovement>(entity)) {
+    haystack += " rotate rotate-movement";
+  }
+  if (registry->any_of<TranslateMovement>(entity)) {
+    haystack += " translate translation";
+  }
+  if (registry->any_of<Scriptable>(entity)) {
+    haystack += " script scriptable";
+  }
+  return sceneLower(std::move(haystack)).find(filterLower) !=
+         std::string::npos;
+}
+
+} // namespace
+
+void
+EngineGui::setSceneEditorOpen(bool open)
+{
+  if (sceneEditorOpen == open) {
+    return;
+  }
+  sceneEditorOpen = open;
+
+  auto* controls = engine ? engine->getControls() : nullptr;
+  if (open) {
+    // The sidebar and the editor both want the left edge; close the narrow
+    // developer menu so the outliner has room.
+    menuVisible = false;
+    sceneAddComponentOpen = false;
+    sceneAddComponentEntity = entt::null;
+    if (controls) {
+      controls->beginPointerMode();
+    }
+  } else {
+    sceneAddComponentOpen = false;
+    sceneAddComponentEntity = entt::null;
+    if (controls) {
+      controls->endPointerMode();
+    }
+  }
+}
+
+entt::entity
+EngineGui::duplicateEntity(entt::entity source)
+{
+  if (source == entt::null || !registry->valid(source) ||
+      !registry->any_of<Persistable>(source)) {
+    return entt::null;
+  }
+
+  const entt::entity duplicate = registry->createPersistent();
+
+  if (auto* model = registry->try_get<Model>(source)) {
+    registry->emplace<Model>(duplicate, model->path);
+  }
+  if (auto* positionable = registry->try_get<Positionable>(source)) {
+    const float offset =
+      0.5f * std::max(0.05f, std::abs(positionable->scale));
+    registry->emplace<Positionable>(
+      duplicate,
+      positionable->pos + glm::vec3(offset, 0.0f, 0.0f),
+      positionable->origin,
+      positionable->rotate,
+      positionable->scale);
+  }
+  if (auto* light = registry->try_get<Light>(source)) {
+    registry->emplace<Light>(duplicate, light->color);
+  }
+  if (auto* rotate = registry->try_get<RotateMovement>(source)) {
+    registry->emplace<RotateMovement>(
+      duplicate,
+      RotateMovement{ rotate->degrees, rotate->degreesPerSecond, rotate->axis });
+  }
+  if (auto* translate = registry->try_get<TranslateMovement>(source)) {
+    registry->emplace<TranslateMovement>(
+      duplicate,
+      TranslateMovement{ translate->delta, translate->unitsPerSecond });
+  }
+  if (auto* door = registry->try_get<Door>(source)) {
+    registry->emplace<Door>(
+      duplicate,
+      Door{ RotateMovement{ door->openMovement.degrees,
+                            door->openMovement.degreesPerSecond,
+                            door->openMovement.axis },
+            RotateMovement{ door->closeMovement.degrees,
+                            door->closeMovement.degreesPerSecond,
+                            door->closeMovement.axis },
+            door->state });
+  }
+  if (auto* key = registry->try_get<Key>(source)) {
+    registry->emplace<Key>(
+      duplicate,
+      Key{ key->lockable,
+           key->state,
+           RotateMovement{ key->turnMovement.degrees,
+                           key->turnMovement.degreesPerSecond,
+                           key->turnMovement.axis },
+           RotateMovement{ key->unturnMovement.degrees,
+                           key->unturnMovement.degreesPerSecond,
+                           key->unturnMovement.axis } });
+  }
+  if (auto* lock = registry->try_get<Lock>(source)) {
+    registry->emplace<Lock>(
+      duplicate, Lock{ lock->position, lock->tolerance, lock->state });
+  }
+  if (auto* script = registry->try_get<Scriptable>(source)) {
+    registry->emplace<Scriptable>(
+      duplicate, script->getScript(), script->language);
+  }
+
+  // Parent and Bootable are intentionally not copied yet: duplicating a
+  // hierarchy or launching a second application needs its own semantics.
+  return duplicate;
+}
+
+void
+EngineGui::renderSceneToolbar(const ImVec2& pos, const ImVec2& size)
+{
+  ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+  ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
+  ImGui::Begin("##hm_scene_toolbar",
+               nullptr,
+               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_NoCollapse |
+                 ImGuiWindowFlags_NoScrollbar);
+  const auto selectionValid = [&]() {
+    return sceneSelection != entt::null && registry->valid(sceneSelection) &&
+           registry->any_of<Persistable>(sceneSelection);
+  };
+
+  ImGui::TextUnformatted("Scene Editor");
+  ImGui::SameLine();
+  if (ImGui::Button("New")) {
+    createNewEntity();
+  }
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!selectionValid());
+  if (ImGui::Button("Duplicate")) {
+    const entt::entity duplicate = duplicateEntity(sceneSelection);
+    if (duplicate != entt::null) {
+      sceneSelection = duplicate;
+      sceneAddComponentOpen = false;
+      sceneAddComponentEntity = entt::null;
+    }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Delete")) {
+    if (selectionValid()) {
+      registry->depersist(sceneSelection);
+      sceneSelection = entt::null;
+      sceneAddComponentOpen = false;
+      sceneAddComponentEntity = entt::null;
+    }
+  }
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  if (ImGui::Button("Save")) {
+    registry->saveAll();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Close")) {
+    setSceneEditorOpen(false);
+  }
+
+  ImGui::SameLine();
+  ImGui::TextDisabled("%zu entities", registry->storage<Persistable>().size());
+  if (selectionValid()) {
+    const auto& persistable = registry->get<Persistable>(sceneSelection);
+    ImGui::SameLine();
+    ImGui::TextDisabled("| selected #%lld", (long long)persistable.entityId);
+  }
+  ImGui::End();
+  ImGui::PopStyleVar();
+}
+
+void
+EngineGui::renderSceneOutliner(const ImVec2& pos, const ImVec2& size)
+{
+  ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+  ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+  ImGui::Begin("Outliner",
+               nullptr,
+               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_NoCollapse);
+
+  ImGui::SetNextItemWidth(-1.0f);
+  ImGui::InputTextWithHint("##scene_filter",
+                           "Search entities...",
+                           sceneFilter,
+                           IM_ARRAYSIZE(sceneFilter));
+
+  struct SceneNode
+  {
+    entt::entity entity;
+    int64_t id;
+    std::string label;
+    std::string tag;
+  };
+
+  std::vector<SceneNode> nodes;
+  for (auto [entity, persistable] : registry->view<Persistable>().each()) {
+    nodes.push_back(SceneNode{ entity,
+                               persistable.entityId,
+                               sceneEntityLabel(registry, entity),
+                               sceneEntityTypeTag(registry, entity) });
+  }
+  std::sort(nodes.begin(),
+            nodes.end(),
+            [](const SceneNode& a, const SceneNode& b) { return a.id < b.id; });
+
+  if (sceneSelection != entt::null &&
+      (!registry->valid(sceneSelection) ||
+       !registry->any_of<Persistable>(sceneSelection))) {
+    sceneSelection = entt::null;
+  }
+
+  ImGui::Separator();
+  ImGui::BeginChild("##scene_outliner_list", ImVec2(0.0f, 0.0f), false);
+
+  std::unordered_map<int64_t, size_t> indexById;
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    indexById[nodes[i].id] = i;
+  }
+
+  const std::string filterLower = sceneLower(sceneFilter);
+
+  const auto drawRow = [&](const SceneNode& node, int depth) {
+    if (!sceneEntityMatches(registry, node.entity, node.id, filterLower)) {
+      return;
+    }
+    if (depth > 0) {
+      ImGui::Indent(14.0f);
+    }
+    ImGui::PushID(static_cast<int>(node.id));
+    const bool selected = node.entity == sceneSelection;
+    const std::string text = "[" + node.tag + "] " + node.label + "  #" +
+                             std::to_string(node.id) + "###scene_node";
+    if (ImGui::Selectable(text.c_str(), selected)) {
+      sceneSelection = node.entity;
+      sceneAddComponentOpen = false;
+      sceneAddComponentEntity = entt::null;
+    }
+    ImGui::PopID();
+    if (depth > 0) {
+      ImGui::Unindent(14.0f);
+    }
+  };
+
+  if (!filterLower.empty()) {
+    for (const auto& node : nodes) {
+      drawRow(node, 0);
+    }
+  } else {
+    std::unordered_map<int64_t, std::vector<int64_t>> children;
+    std::unordered_set<int64_t> hasParent;
+    for (const auto& node : nodes) {
+      if (auto* parent = registry->try_get<Parent>(node.entity)) {
+        for (const int childId : parent->childrenIds) {
+          if (childId == node.id ||
+              indexById.find(childId) == indexById.end()) {
+            continue;
+          }
+          children[node.id].push_back(childId);
+          hasParent.insert(childId);
+        }
+      }
+    }
+
+    std::unordered_set<int64_t> visited;
+    std::function<void(const SceneNode&, int)> drawTree =
+      [&](const SceneNode& node, int depth) {
+        if (!visited.insert(node.id).second) {
+          return;
+        }
+        drawRow(node, depth);
+        const auto childrenIt = children.find(node.id);
+        if (childrenIt == children.end()) {
+          return;
+        }
+        for (const int64_t childId : childrenIt->second) {
+          const auto childIt = indexById.find(childId);
+          if (childIt != indexById.end()) {
+            drawTree(nodes[childIt->second], depth + 1);
+          }
+        }
+      };
+
+    for (const auto& node : nodes) {
+      if (!hasParent.contains(node.id)) {
+        drawTree(node, 0);
+      }
+    }
+    // Defensive: malformed/cyclic Parent data must still leave every entity
+    // reachable in the outliner.
+    for (const auto& node : nodes) {
+      if (!visited.contains(node.id)) {
+        drawTree(node, 0);
+      }
+    }
+  }
+
+  ImGui::EndChild();
+  ImGui::End();
+}
+
+void
+EngineGui::renderSceneInspector(const ImVec2& pos, const ImVec2& size)
+{
+  ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+  ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+  ImGui::Begin("Inspector",
+               nullptr,
+               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_NoCollapse);
+
+  if (sceneSelection == entt::null || !registry->valid(sceneSelection) ||
+      !registry->any_of<Persistable>(sceneSelection)) {
+    sceneSelection = entt::null;
+    ImGui::TextDisabled("Select an entity in the Outliner.");
+    ImGui::TextDisabled("New creates an entity with a transform.");
+    ImGui::End();
+    return;
+  }
+
+  const auto& persistable = registry->get<Persistable>(sceneSelection);
+  ImGui::TextUnformatted(sceneEntityLabel(registry, sceneSelection).c_str());
+  ImGui::TextDisabled("Entity #%lld  (raw %d)",
+                      (long long)persistable.entityId,
+                      (int)entt::to_integral(sceneSelection));
+  ImGui::Separator();
+
+  if (ImGui::Button("Duplicate")) {
+    const entt::entity duplicate = duplicateEntity(sceneSelection);
+    if (duplicate != entt::null) {
+      sceneSelection = duplicate;
+      sceneAddComponentOpen = false;
+      sceneAddComponentEntity = entt::null;
+    }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Delete")) {
+    registry->depersist(sceneSelection);
+    sceneSelection = entt::null;
+    sceneAddComponentOpen = false;
+    sceneAddComponentEntity = entt::null;
+    ImGui::End();
+    return;
+  }
+  ImGui::Separator();
+
+  renderComponentPanel(sceneSelection);
+
+  ImGui::Separator();
+  if (ImGui::Button("+ Add Component", ImVec2(-1.0f, 0.0f))) {
+    sceneAddComponentOpen = true;
+    sceneAddComponentEntity = sceneSelection;
+  }
+  if (sceneAddComponentOpen && sceneAddComponentEntity == sceneSelection) {
+    if (ImGui::Button("Cancel##scene_add_component")) {
+      sceneAddComponentOpen = false;
+      sceneAddComponentEntity = entt::null;
+    }
+    addComponentPanel(sceneSelection, sceneAddComponentOpen);
+  }
+
+  ImGui::End();
+}
+
+entt::entity
+EngineGui::pickSceneEntity(float mouseX, float mouseY)
+{
+  auto* camera = engine ? engine->getCamera() : nullptr;
+  if (!camera) {
+    return entt::null;
+  }
+
+  const Ray ray = createMouseRay(mouseX,
+                                 mouseY,
+                                 SCREEN_WIDTH,
+                                 SCREEN_HEIGHT,
+                                 camera->getProjectionMatrix(),
+                                 camera->getViewMatrix());
+
+  entt::entity best = entt::null;
+  float bestDistance = std::numeric_limits<float>::max();
+
+  for (auto [entity, positionable, model] :
+       registry->view<Positionable, Model>().each()) {
+    auto* sphere = registry->try_get<BoundingSphere>(entity);
+    if (!sphere) {
+      systems::emplaceBoundingSphere(registry, entity);
+      sphere = registry->try_get<BoundingSphere>(entity);
+    }
+    if (!sphere) {
+      continue;
+    }
+    if (!systems::intersect(*sphere, ray.origin, ray.direction, 100000.0f)) {
+      continue;
+    }
+    // Approximate depth along the ray; good enough to pick the front-most
+    // bounding sphere when several overlap.
+    const float distance =
+      glm::dot(sphere->center - ray.origin, ray.direction);
+    if (distance >= 0.0f && distance < bestDistance) {
+      bestDistance = distance;
+      best = entity;
+    }
+  }
+  return best;
+}
+
+void
+EngineGui::drawSceneSelectionOverlay(const ImVec2& clipMin,
+                                     const ImVec2& clipMax)
+{
+  if (sceneSelection == entt::null || !registry->valid(sceneSelection) ||
+      !registry->any_of<Model, Positionable>(sceneSelection)) {
+    return;
+  }
+
+  auto* sphere = registry->try_get<BoundingSphere>(sceneSelection);
+  if (!sphere) {
+    systems::emplaceBoundingSphere(registry, sceneSelection);
+    sphere = registry->try_get<BoundingSphere>(sceneSelection);
+  }
+  auto* camera = engine ? engine->getCamera() : nullptr;
+  if (!sphere || !camera) {
+    return;
+  }
+
+  const glm::mat4& projection = camera->getProjectionMatrix();
+  const glm::mat4& view = camera->getViewMatrix();
+  const glm::vec4 clip =
+    projection * view * glm::vec4(sphere->center, 1.0f);
+  if (clip.w <= 0.0f) {
+    return;
+  }
+
+  const float ndcX = clip.x / clip.w;
+  const float ndcY = clip.y / clip.w;
+  // Match createMouseRay(): the wlroots render path can flip projection Y.
+  const float pointerNdcY = projection[1][1] < 0.0f ? -ndcY : ndcY;
+  const float screenX = (ndcX * 0.5f + 0.5f) * SCREEN_WIDTH;
+  const float screenY =
+    (1.0f - (pointerNdcY * 0.5f + 0.5f)) * SCREEN_HEIGHT;
+  const float radius = std::clamp(std::abs(projection[1][1]) *
+                                    sphere->radius / clip.w * SCREEN_HEIGHT *
+                                    0.5f,
+                                  4.0f,
+                                  4000.0f);
+
+  ImDrawList* draw = ImGui::GetForegroundDrawList();
+  const ImU32 color = IM_COL32(255, 196, 64, 235);
+  draw->PushClipRect(clipMin, clipMax, true);
+  // A large/clipped object's bounding circle can sit entirely outside the
+  // viewport, so always mark the projected centre as well.
+  draw->AddCircle(ImVec2(screenX, screenY), radius, color, 40, 2.0f);
+  draw->AddLine(ImVec2(screenX - 10.0f, screenY),
+                ImVec2(screenX - 3.0f, screenY),
+                color,
+                2.0f);
+  draw->AddLine(ImVec2(screenX + 3.0f, screenY),
+                ImVec2(screenX + 10.0f, screenY),
+                color,
+                2.0f);
+  draw->AddLine(ImVec2(screenX, screenY - 10.0f),
+                ImVec2(screenX, screenY - 3.0f),
+                color,
+                2.0f);
+  draw->AddLine(ImVec2(screenX, screenY + 3.0f),
+                ImVec2(screenX, screenY + 10.0f),
+                color,
+                2.0f);
+
+  std::string selectionLabel = sceneEntityLabel(registry, sceneSelection);
+  if (auto* persistable = registry->try_get<Persistable>(sceneSelection)) {
+    selectionLabel += "  #" + std::to_string(persistable->entityId);
+  }
+  draw->AddText(ImVec2(clipMin.x + 8.0f, clipMin.y + 8.0f),
+                color,
+                selectionLabel.c_str());
+  draw->PopClipRect();
+}
+
+void
+EngineGui::renderSceneEditor()
+{
+  if (!sceneEditorOpen) {
+    return;
+  }
+
+  if (sceneSelection != entt::null &&
+      (!registry->valid(sceneSelection) ||
+       !registry->any_of<Persistable>(sceneSelection))) {
+    sceneSelection = entt::null;
+  }
+
+  // Keys are disabled while the editor is open (Engine::disableKeysIfImguiActive),
+  // so this Escape is consumed here instead of opening the quit dialog.
+  if (!ImGui::IsAnyItemActive() &&
+      !ImGui::IsPopupOpen("",
+                          ImGuiPopupFlags_AnyPopupId |
+                            ImGuiPopupFlags_AnyPopupLevel) &&
+      ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    setSceneEditorOpen(false);
+    return;
+  }
+
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  const ImVec2 origin = viewport->WorkPos;
+  const ImVec2 work = viewport->WorkSize;
+  const float toolbarHeight = 42.0f;
+  const float gap = 6.0f;
+  const float leftWidth = std::clamp(work.x * 0.22f, 240.0f, 320.0f);
+  const float rightWidth = std::clamp(work.x * 0.28f, 300.0f, 420.0f);
+  const float sideTop = origin.y + toolbarHeight + gap;
+  const float sideHeight = std::max(120.0f, work.y - toolbarHeight - gap * 2.0f);
+
+  renderSceneToolbar(ImVec2(origin.x, origin.y),
+                     ImVec2(work.x, toolbarHeight));
+  renderSceneOutliner(ImVec2(origin.x + 30.0f, sideTop),
+                      ImVec2(leftWidth, sideHeight));
+  renderSceneInspector(
+    ImVec2(origin.x + work.x - rightWidth - gap, sideTop),
+    ImVec2(rightWidth, sideHeight));
+
+  // Click in the open centre area to pick an entity. The panels own their
+  // rectangles, so this does not steal clicks from Outliner/Inspector/toolbar.
+  const ImVec2 mouse = ImGui::GetIO().MousePos;
+  const float viewLeft = origin.x + 30.0f + leftWidth + gap;
+  const float viewRight = origin.x + work.x - rightWidth - gap;
+  const float viewBottom = sideTop + sideHeight;
+  if (!ImGui::IsPopupOpen("",
+                          ImGuiPopupFlags_AnyPopupId |
+                            ImGuiPopupFlags_AnyPopupLevel) &&
+      ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouse.x > viewLeft &&
+      mouse.x < viewRight && mouse.y > sideTop && mouse.y < viewBottom) {
+    sceneSelection = pickSceneEntity(mouse.x, mouse.y);
+    sceneAddComponentOpen = false;
+    sceneAddComponentEntity = entt::null;
+  }
+
+  drawSceneSelectionOverlay(ImVec2(viewLeft, sideTop),
+                            ImVec2(viewRight, viewBottom));
+}
+
 void
 EngineGui::renderChat()
 {
@@ -644,7 +1328,21 @@ EngineGui::renderExitConfirm()
 void
 EngineGui::createNewEntity()
 {
-  entt::entity newEntity = registry->createPersistent();
+  const entt::entity newEntity = registry->createPersistent();
+
+  // A Scene Editor entity is only useful if it can be placed in the world, so
+  // start with a transform in front of the camera. Components can be added
+  // afterwards from the Inspector.
+  glm::vec3 spawn(0.0f);
+  if (auto* camera = engine ? engine->getCamera() : nullptr) {
+    spawn = camera->position + camera->front * 3.0f;
+  }
+  registry->emplace<Positionable>(
+    newEntity, spawn, glm::vec3(0.0f), glm::vec3(0.0f), 1.0f);
+
+  sceneSelection = newEntity;
+  sceneAddComponentOpen = false;
+  sceneAddComponentEntity = entt::null;
 }
 
 void
@@ -694,8 +1392,9 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
       showAddComponentPanel = false;
     }
   } else if (selectedComponentType == MODEL_TYPE) {
-    static char modelPath[128] = "";
+    static char modelPath[512] = "";
     ImGui::InputText("Model Path##New", modelPath, IM_ARRAYSIZE(modelPath));
+    ImGui::TextDisabled("e.g. vox/model.obj (Assimp formats supported)");
 
     if (ImGui::Button("Add Model Component")) {
       registry->emplace<Model>(entity, modelPath);
@@ -935,13 +1634,10 @@ EngineGui::renderComponentPanel(entt::entity entity)
   }
   if (registry->any_of<Model>(entity)) {
     auto& model = registry->get<Model>(entity);
-    char modelPath[128] = "";
-    strcpy(modelPath, model.path.c_str());
     ImGui::Text("Model Component:");
     ImGui::BeginGroup();
-    ImGui::InputText(("Model Path##" + to_string((int)entity)).c_str(),
-                     modelPath,
-                     IM_ARRAYSIZE(modelPath));
+    ImGui::TextWrapped("%s", model.path.c_str());
+    ImGui::TextDisabled("Remove and re-add to change (import lands next).");
     if (ImGui::Button(
           ("Delete Component##Model" + to_string((int)entity)).c_str())) {
       registry->removePersistent<Model>(entity);
@@ -1223,131 +1919,6 @@ EngineGui::renderComponentPanel(entt::entity entity)
       systems::resizeBootable(registry, entity, width, height);
     }
   }
-}
-
-/*
-void
-EngineGui::renderEntities()
-{
-  auto view = registry->view<Persistable>();
-  // Hashmap Declaration
-  static std::unordered_map<entt::entity, bool> componentOptionsState;
-  for (auto [entity, persistable] : view.each()) {
-    ImGui::Spacing();
-    ImGui::Spacing();
-    ImGui::Text("Entity ID: %s", std::to_string(persistable.entityId).c_str());
-    ImGui::Text("Raw Entity ID: %s", std::to_string((int)entity).c_str());
-    bool& showAddComponentPanel = componentOptionsState[entity];
-    if (ImGui::Button("- Delete Entity")) {
-      registry->depersist(entity);
-    }
-    if (!showAddComponentPanel) {
-      if (ImGui::Button(
-            ("+ Add Component##" + to_string((int)entity)).c_str())) {
-        showAddComponentPanel = true; // Show the options on button press
-      }
-    }
-    if (showAddComponentPanel) { // Only display the combo and fields if active
-      if ((ImGui::Button(("Go Back##" + to_string((int)entity)).c_str()))) {
-        showAddComponentPanel = false;
-      }
-      addComponentPanel(entity, showAddComponentPanel);
-    }
-
-    renderComponentPanel(entity);
-  }
-}
-*/
-
-bool
-entityMatchesComponentFilter(shared_ptr<EntityRegistry> registry,
-                                        entt::entity entity,
-                                        const std::string& filter)
-{
-  auto rv = false;
-
-  auto model = registry->try_get<Model>(entity);
-  if (model != NULL && model->path.find(filter) != std::string::npos) {
-    rv = true;
-  }
-
-  auto bootable = registry->try_get<Bootable>(entity);
-  if (bootable != NULL && bootable->cmd.find(filter) != std::string::npos) {
-    rv = true;
-  }
-
-  return rv;
-}
-
-void
-EngineGui::renderEntities()
-{
-    auto view = registry->view<Persistable>();
-    static std::unordered_map<entt::entity, bool> componentOptionsState;
-
-    // Filter variables
-    static char filterBuffer[256] = "";
-    static std::string currentFilter = "";
-
-    // Filter input
-    ImGui::InputText("Filter Entities", filterBuffer, IM_ARRAYSIZE(filterBuffer));
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        currentFilter = std::string(filterBuffer);
-    }
-
-    for (auto [entity, persistable] : view.each()) {
-        // Apply filter
-        if (!currentFilter.empty()) {
-            bool matchesFilter = false;
-
-            // Check if entity ID matches filter
-            if (std::to_string(persistable.entityId).find(currentFilter) != std::string::npos) {
-                matchesFilter = true;
-            }
-
-            // Check if any component attribute matches filter
-            // This is a placeholder - you'll need to implement this based on your component structure
-            if (!matchesFilter && entityMatchesComponentFilter(registry, entity, currentFilter)) {
-                matchesFilter = true;
-            }
-
-            if (!matchesFilter) continue; // Skip this entity if it doesn't match the filter
-        }
-
-        ImGui::Spacing();
-        ImGui::Spacing();
-        ImGui::Text("Entity ID: %s", std::to_string(persistable.entityId).c_str());
-        ImGui::Text("Raw Entity ID: %s", std::to_string((int)entity).c_str());
-
-        bool& showAddComponentPanel = componentOptionsState[entity];
-        if (ImGui::Button("++ Copy Entity")) {
-          auto duplicate = registry->createPersistent();
-          auto model = registry->try_get<Model>(entity);
-          if(model) {
-            // TODO: This is terrible code. I have duplicates of models this way. I need to load the model once and reuse it.
-            registry->emplace<Model>(duplicate, model->path);
-          }
-          auto positionable = registry->try_get<Positionable>(entity);
-          if(positionable) {
-            registry->emplace<Positionable>(duplicate, positionable);
-          }
-        }
-        if (ImGui::Button("- Delete Entity")) {
-            registry->depersist(entity);
-        }
-        if (!showAddComponentPanel) {
-            if (ImGui::Button(("+ Add Component##" + std::to_string((int)entity)).c_str())) {
-                showAddComponentPanel = true; // Show the options on button press
-            }
-        }
-        if (showAddComponentPanel) { // Only display the combo and fields if active
-            if ((ImGui::Button(("Go Back##" + std::to_string((int)entity)).c_str()))) {
-                showAddComponentPanel = false;
-            }
-            addComponentPanel(entity, showAddComponentPanel);
-        }
-        renderComponentPanel(entity);
-    }
 }
 
 shared_ptr<LoggerVector>

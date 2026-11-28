@@ -94,7 +94,10 @@ class Controls
   bool windowMoveNoHitLogged = false;
   bool windowResizeDeltaLogged = false;
   bool exitConfirmPending_ = false;
-  bool exitDialogRestoreFreeLook_ = false;
+  // Shared cursor-mode stack for the exit dialog and the Scene Editor. The
+  // first owner reveals the cursor; the last owner restores free look.
+  bool pointerModeRestoreFreeLook_ = false;
+  int pointerModeRefs_ = 0;
   double lastResizeRequestTime = 0.0;
   bool debugResizeFired = false;
 
@@ -212,8 +215,11 @@ public:
   // Esc in free view asks for confirmation instead of quitting immediately.
   // EngineGui owns the dialog; it polls this once per frame.
   bool takeExitConfirmRequest();
-  // While the exit dialog is open, reveal the cursor so its buttons can be
-  // clicked. On cancel, restore free look if the cursor was hidden before.
+  // While a mouse-driven UI (exit dialog, Scene Editor) is open, reveal the
+  // cursor so its widgets can be clicked. On close, restore free look if the
+  // cursor was hidden before. Calls may nest; the last end call restores.
+  void beginPointerMode(bool centerPointer = false);
+  void endPointerMode();
   void beginExitDialog();
   void endExitDialog();
 

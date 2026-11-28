@@ -381,6 +381,8 @@ makepkg -f
 | `HACKMATRIX_IMGUI_MULTIPLAYER_TAB=1` | 自动打开左侧菜单并强制选中多人游戏标签页（UI 截图/测试） |
 | `HACKMATRIX_IMGUI_MENU_OPEN=1` | 启动时自动打开左侧菜单（UI 截图/测试） |
 | `HACKMATRIX_IMGUI_SYSTEM_TAB=1` | 自动打开左侧菜单并选中 System Config（UI 截图/测试） |
+| `HACKMATRIX_IMGUI_SCENE_EDITOR=1` | 启动时直接打开 Scene Editor（UI 截图/测试） |
+| `HACKMATRIX_IMGUI_SCENE_SELECT_FIRST=1` | 配合上一项，自动选中第一个 Model 实体（UI 截图/测试） |
 | `HACKMATRIX_DEBUG_MULTIPLAYER_CONNECT=host:port` | 自动连接多人面板一次（无头 UI 测试） |
 | `HACKMATRIX_DEBUG_FOCUS_NEW_WINDOW=1` | 锁定每个新顶层窗口及其输入（默认只有按 `R` 才锁定窗口） |
 | `HACKMATRIX_DEBUG_PREVIEW_FIRST_WINDOW=1` | 为第一个窗口创建本地回环预览（无头 UI 测试） |
