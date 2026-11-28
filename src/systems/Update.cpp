@@ -37,6 +37,10 @@ systems::update(std::shared_ptr<EntityRegistry> registry, entt::entity entity)
 
   auto hasBoundingSphere = registry->all_of<BoundingSphere>(entity);
   if (hasBoundingSphere) {
-    emplaceBoundingSphere(registry, entity);
+    if (registry->all_of<Model, Positionable>(entity)) {
+      emplaceBoundingSphere(registry, entity);
+    } else {
+      registry->remove<BoundingSphere>(entity);
+    }
   }
 }

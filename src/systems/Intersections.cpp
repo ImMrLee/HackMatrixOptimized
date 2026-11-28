@@ -7,6 +7,9 @@ void
 emplaceBoundingSphere(std::shared_ptr<EntityRegistry> registry,
                       entt::entity entity)
 {
+  if (!registry->all_of<Model, Positionable>(entity)) {
+    return;
+  }
   auto [model, positionable] = registry->get<Model, Positionable>(entity);
 
   auto boundingSphere = model.getBoundingSphere(positionable.scale);

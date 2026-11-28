@@ -87,6 +87,8 @@ Scene Editor 是原来的 Entity Editor 重做版：左侧 `Outliner` 显示场�
 
 `Close` 是取消：会恢复到上次 `Save`（或刚打开编辑器）时的场景状态；只有点击 `Save` 才会把当前改动写入数据库。关闭整个程序时如果编辑器还开着，也会先丢弃未保存的编辑器改动。
 
+`New` 创建的是一个空场景实体：只有相机前方的 `Positionable`，没有模型或灯光，Outliner 里显示为 `Empty Entity`。选中它后在 Inspector 里点 `+ Add Component` 添加 `Model`、`Light` 等组件即可。
+
 See the [wiki page](https://github.com/collinalexbell/HackMatrix/wiki/Game-Engine) for more info about the game engine and how to use the editor.
 
 这个菜单还有Multyplayer模式，功能大致是可以让其他使用hackmartix的用户可以加入其他人的环境（有点意思，原作者没有说明这个功能，但我发现这个只是能相互看到各自的头像，不能多窗口互联）

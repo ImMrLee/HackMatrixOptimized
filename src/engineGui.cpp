@@ -29,6 +29,7 @@
 #include <sstream>
 #include <string>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -641,6 +642,9 @@ sceneEntityLabel(const std::shared_ptr<EntityRegistry>& registry,
   }
   if (registry->any_of<Scriptable>(entity)) {
     return "Script";
+  }
+  if (registry->any_of<Positionable>(entity)) {
+    return "Empty Entity";
   }
   return "Entity";
 }
@@ -1529,6 +1533,10 @@ EngineGui::renderSceneToolbar(const ImVec2& pos, const ImVec2& size)
   ImGui::BeginDisabled(structureLocked);
   if (ImGui::Button("New")) {
     createNewEntity();
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip(
+      "Create an empty scene entity with a transform in front of the camera.");
   }
   ImGui::SameLine();
   ImGui::BeginDisabled(!selectionValid());
@@ -2590,7 +2598,7 @@ EngineGui::drawSceneSelectionOverlay(const ImVec2& clipMin,
                                      const ImVec2& clipMax)
 {
   if (sceneSelection == entt::null || !registry->valid(sceneSelection) ||
-      !registry->any_of<Model, Positionable>(sceneSelection)) {
+      !registry->all_of<Model, Positionable>(sceneSelection)) {
     return;
   }
 
@@ -2937,6 +2945,8 @@ EngineGui::createNewEntity()
   registry->emplace<Positionable>(
     newEntity, spawn, glm::vec3(0.0f), glm::vec3(0.0f), 1.0f);
 
+  sceneSelectionSet.clear();
+  sceneSelectionSet.push_back(newEntity);
   sceneSelection = newEntity;
   sceneAddComponentOpen = false;
   sceneAddComponentEntity = entt::null;
@@ -2969,7 +2979,11 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
     ImGui::ColorEdit3("Color", (float*)&lightColor);
 
     if (ImGui::Button("Add Light Component")) {
-      registry->emplace<Light>(entity, lightColor);
+      if (auto* light = registry->try_get<Light>(entity)) {
+        light->color = lightColor;
+      } else {
+        registry->emplace<Light>(entity, lightColor);
+      }
       showAddComponentPanel = false;
     }
   } else if (selectedComponentType == POSITIONABLE_TYPE) {
@@ -2984,7 +2998,7 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
     ImGui::InputFloat("Scale", &scale);
 
     if (ImGui::Button("Add Positionable Component")) {
-      registry->emplace<Positionable>(
+      registry->emplace_or_replace<Positionable>(
         entity, position, origin, rotation, scale);
       showAddComponentPanel = false;
     }
@@ -2994,7 +3008,7 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
     ImGui::TextDisabled("e.g. vox/model.obj (Assimp formats supported)");
 
     if (ImGui::Button("Add Model Component")) {
-      registry->emplace<Model>(entity, modelPath);
+      registry->emplace_or_replace<Model>(entity, modelPath);
       showAddComponentPanel = false;
     }
   } else if (selectedComponentType == ROTATE_MOVEMENT_TYPE) {
@@ -3006,7 +3020,7 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
     ImGui::InputFloat3("Rotation Axis", glm::value_ptr(axis));
 
     if (ImGui::Button("Add RotateMovement Component")) {
-      registry->emplace<RotateMovement>(
+      registry->emplace_or_replace<RotateMovement>(
         entity, degreesToRotate, degreesPerSecond, axis);
       showAddComponentPanel = false;
     }
@@ -3038,7 +3052,7 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
       auto close = RotateMovement{ closeDegreesToRotate,
                                    closeDegreesPerSecond,
                                    closeAxis };
-      registry->emplace<Door>(entity, open, close, doorState);
+      registry->emplace_or_replace<Door>(entity, open, close, doorState);
       showAddComponentPanel = false;
     }
   } else if (selectedComponentType == KEY_TYPE) {
@@ -3072,7 +3086,7 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
       auto unturn = RotateMovement{ unturnDegreesToRotate,
                                     unturnDegreesPerSecond,
                                     unturnAxis };
-      registry->emplace<Key>(entity, lockable, turnState, turn, unturn);
+      registry->emplace_or_replace<Key>(entity, lockable, turnState, turn, unturn);
       showAddComponentPanel = false;
     }
   } else if (selectedComponentType == LOCK_TYPE) {
@@ -3087,7 +3101,7 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
     ImGui::RadioButton("Unlocked", (int*)&lockState, (int)LockState::UNLOCKED);
 
     if (ImGui::Button("Add Lock Component")) {
-      registry->emplace<Lock>(entity, lockPosition, lockTolerance, lockState);
+      registry->emplace_or_replace<Lock>(entity, lockPosition, lockTolerance, lockState);
       showAddComponentPanel = false;
     }
   } else if (selectedComponentType == PARENT_TYPE) {
@@ -3103,7 +3117,7 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
       childrenIds.pop_back();
     }
     if (ImGui::Button("Add Parent Component")) {
-      registry->emplace<Parent>(entity, childrenIds);
+      registry->emplace_or_replace<Parent>(entity, childrenIds);
       childrenIds = vector<int>();
       showAddComponentPanel = false;
     }
@@ -3114,8 +3128,14 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
     ImGui::RadioButton("Python", (int*)&scriptLanguage, (int)PYTHON);
 
     if (ImGui::Button("Add Scriptable Component")) {
-      registry->emplace<Scriptable>(entity, "", scriptLanguage);
-      systems::emplaceBoundingSphere(registry, entity);
+      if (auto* script = registry->try_get<Scriptable>(entity)) {
+        script->language = scriptLanguage;
+      } else {
+        registry->emplace<Scriptable>(entity, "", scriptLanguage);
+      }
+      if (registry->all_of<Model, Positionable>(entity)) {
+        systems::emplaceBoundingSphere(registry, entity);
+      }
       showAddComponentPanel = false;
     }
   } else if (selectedComponentType == TRANSLATE_MOVEMENT_TYPE) {
@@ -3126,7 +3146,7 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
     ImGui::InputFloat("Units/s", &unitsPerSecond);
 
     if (ImGui::Button("Add TranslateMovement Component")) {
-      registry->emplace<TranslateMovement>(
+      registry->emplace_or_replace<TranslateMovement>(
         entity, translateDelta, unitsPerSecond);
       showAddComponentPanel = false;
     }
@@ -3158,7 +3178,7 @@ EngineGui::addComponentPanel(entt::entity entity, bool& showAddComponentPanel)
       if (strName.length() > 0) {
         optname = strName;
       }
-      registry->emplace<Bootable>(entity,
+      registry->emplace_or_replace<Bootable>(entity,
                                   cmd,
                                   args,
                                   killOnExit == 1 ? true : false,
@@ -3397,7 +3417,8 @@ EngineGui::renderComponentPanel(entt::entity entity)
         ("Child Id##" + to_string(i) + to_string((int)entity)).c_str(),
         &parent.childrenIds[i]);
     }
-    if (ImGui::Button(("- Remove Child##" + to_string((int)entity)).c_str())) {
+    if (!parent.childrenIds.empty() &&
+        ImGui::Button(("- Remove Child##" + to_string((int)entity)).c_str())) {
       parent.childrenIds.pop_back();
     }
     if (ImGui::Button(("+ Add Child##" + to_string((int)entity)).c_str())) {
@@ -3405,7 +3426,7 @@ EngineGui::renderComponentPanel(entt::entity entity)
     }
     if (ImGui::Button(
           ("Delete Component##Parent" + to_string((int)entity)).c_str())) {
-      registry->removePersistent<Positionable>(entity);
+      registry->removePersistent<Parent>(entity);
     }
     ImGui::Spacing();
   }
@@ -3448,15 +3469,15 @@ EngineGui::renderComponentPanel(entt::entity entity)
     auto& bootable = registry->get<Bootable>(entity);
     auto label = makeLabeler(entity, "Bootable");
 
-    char cmd[128] = "";
-    strcpy(cmd, bootable.cmd.c_str());
+    char cmd[1024] = {};
+    std::snprintf(cmd, sizeof(cmd), "%s", bootable.cmd.c_str());
 
-    char args[128] = "";
-    strcpy(args, bootable.args.c_str());
+    char args[1024] = {};
+    std::snprintf(args, sizeof(args), "%s", bootable.args.c_str());
 
-    char name[128] = "";
+    char name[1024] = {};
     if (bootable.name.has_value()) {
-      strcpy(name, bootable.name.value().c_str());
+      std::snprintf(name, sizeof(name), "%s", bootable.name.value().c_str());
     }
 
     int killOnExit = bootable.killOnExit ? 1 : 0;

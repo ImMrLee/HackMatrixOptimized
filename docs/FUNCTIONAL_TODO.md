@@ -85,6 +85,14 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-28：**Scene Editor 稳定性修复**：
+  - `New` 明确为创建空场景实体（仅 `Positionable`，相机前方），Outliner 显示 `Empty Entity`，通过 Inspector 的 `+ Add Component` 添加 Model/Light；
+  - 修复选中 `Positionable`-only 实体（New 实体、Wayland 应用、Light 实体等）时崩溃：`emplaceBoundingSphere` / `systems::update` / 选中圈绘制现在都要求同时存在 Model+Positionable；
+  - 修复 Parent 组件的删除按钮误删 Positionable，以及空 Parent 点 `Remove Child` 对空 vector `pop_back()`；
+  - 修复 Bootable 长 `cmd`/`args`/`name` 用 128 字节 `strcpy` 造成的栈溢出，改为 1024 字节缓冲 + `snprintf`；
+  - 添加已存在的组件时不再直接 `emplace` 触发 entt 断言：可替换类型用 `emplace_or_replace`，Light/Scriptable 走字段更新；
+  - 98/98 单测通过。
+
 - 2026-11-28：**Scene Editor 完整编辑能力**：
   - 变换 gizmo 扩展为 Move / Rotate / Scale（`Alt+W/E/R`，纯 `WASD` 留给相机）：平移沿三轴，旋转显示三个世界轴圆环，缩放使用轴端方块；拖动期间只改本地 `Positionable` 并 `damage()`，松手提交网络编辑；
   - 场景视口支持 `WASD` 移动相机、按住鼠标中键拖动视角；移动/视角输入在文本输入框或弹出菜单打开时自动让位；
