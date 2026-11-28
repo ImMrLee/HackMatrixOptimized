@@ -85,6 +85,12 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-28：**场景 DB 去作者机器路径**：
+  - `Model.path` 的 `/home/collin/KuberLogos/vox/*.obj` 改为 `vox/*.obj`（其中 `temple.obj`、`water.obj`、`lightFixtureNYC.obj` 本地/仓库内不存在，仍会被“缺失模型”逻辑跳过）；
+  - `Bootable.cmd/args` 的 `/home/collin/...` 改为 `kitty`、`apps/code.sh`、`apps/.dialog.conf` 等可移植形式；
+  - 清空 DB 中遗留的进程 pid；`db/matrix.db` 内不再包含 `/home/`；
+  - 单测 97/97 通过。
+
 - 2026-11-28：**清理作者机器残留 / 死代码**：
   - `blocks.cpp` 的 `/home/collin/matrix/block` 改为 `HACKMATRIX_BLOCK_TEXTURE_DIR`（默认 `blocks`）；
   - 删除空/未使用头文件（`gui.h`、`DirectRenderable.h`、`Backend.h`、`menu_web_server.h`、`objectObserver.h`）、`assets.*`、`bot.cpp`、旧 `mmo/`、`branches/`、`mds/`、`stream/`、`webInclude/`、`config/remmina.pref`、`tools/devTools/reload`；
