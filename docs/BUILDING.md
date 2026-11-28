@@ -378,7 +378,8 @@ makepkg -f
 | `HACKMATRIX_IMGUI_FLIP=0` | 不垂直镜像覆盖层（默认会为 wlroots FBO 镜像） |
 | `HACKMATRIX_SCREENSHOT_FRAME=N` | 在第 N 帧将截图写入 `screenshots/<time>.png`（无头验证） |
 | `HACKMATRIX_SCREENSHOT_AFTER_MS=N` | 首帧后等待 N 毫秒再截图（客户端稍后连接时很有用） |
-| `HACKMATRIX_IMGUI_MULTIPLAYER_TAB=1` | 强制选中多人游戏标签页（UI 截图/测试） |
+| `HACKMATRIX_IMGUI_MULTIPLAYER_TAB=1` | 自动打开左侧菜单并强制选中多人游戏标签页（UI 截图/测试） |
+| `HACKMATRIX_IMGUI_MENU_OPEN=1` | 启动时自动打开左侧菜单（UI 截图/测试） |
 | `HACKMATRIX_DEBUG_MULTIPLAYER_CONNECT=host:port` | 自动连接多人面板一次（无头 UI 测试） |
 | `HACKMATRIX_DEBUG_FOCUS_NEW_WINDOW=1` | 锁定每个新顶层窗口及其输入（默认只有按 `R` 才锁定窗口） |
 | `HACKMATRIX_DEBUG_PREVIEW_FIRST_WINDOW=1` | 为第一个窗口创建本地回环预览（无头 UI 测试） |

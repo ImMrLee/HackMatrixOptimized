@@ -12,6 +12,10 @@
 
 using namespace std;
 
+namespace MultiPlayer {
+class Gui;
+}
+
 class Engine;
 class EngineGui
 {
@@ -25,6 +29,12 @@ class EngineGui
   void addComponentPanel(entt::entity, bool&);
   void renderComponentPanel(entt::entity);
   void renderEntities();
+
+  // Left-edge collapsible sidebar. Hidden by default; the edge tab slides the
+  // panel out and it covers about 20% of the output width.
+  bool menuVisible = false;
+  float menuAnim = 0.0f;
+  void renderMenu(MultiPlayer::Gui& gui, float fps);
 
   // Multiplayer chat overlay (T to open, Enter send, Esc close).
   bool chatOpen = false;

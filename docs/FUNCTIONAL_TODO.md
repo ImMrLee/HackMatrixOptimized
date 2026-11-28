@@ -85,6 +85,12 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-28：**HackMatrix 菜单改为左侧可收起侧边栏**：
+  - 默认隐藏；屏幕左侧边缘有竖直长条 + 箭头，`F` 呼出鼠标后点击，面板以约 0.16s 动画从左侧滑出，占输出宽度约 1/5；再次点击长条或点面板右上角 `<<` 收起；
+  - 保留原有 FPS / Debug Log / Entity Editor / Multiplayer tabs；窄宽度下 tab bar 使用滚动而不是截断标签；
+  - `HACKMATRIX_IMGUI_MENU_OPEN=1` 可自动打开；`HACKMATRIX_IMGUI_MULTIPLAYER_TAB=1` 仍会自动打开并选中 Multiplayer；
+  - 单测 97/97 通过。
+
 - 2026-11-28：**专用服务器独立 Arch 包**：
   - 新增 `distributions/arch/PKGBUILD-server` 与 `matrix-server-script`，只构建 `matrix-server`，产物 `hackmatrix-server-git-*.pkg.tar.zst`，与主程序包可并存；
   - 运行时依赖仅 `sqlite`、`spdlog`、`fmt`；CMake 配置仍需要桌面构建依赖；

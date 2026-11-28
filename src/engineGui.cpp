@@ -16,6 +16,7 @@
 #include "logger.h"
 #include "persister.h"
 #include "string"
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <string>
@@ -58,6 +59,13 @@ EngineGui::EngineGui(Engine* engine,
   if (const char* flip = std::getenv("HACKMATRIX_IMGUI_FLIP")) {
     imguiFlipY = std::atoi(flip) != 0;
   }
+  // Headless UI tests open the sidebar to reach the tabs; normal runs start
+  // with it hidden behind the left-edge tab.
+  if (std::getenv("HACKMATRIX_IMGUI_MULTIPLAYER_TAB") != nullptr ||
+      std::getenv("HACKMATRIX_IMGUI_MENU_OPEN") != nullptr) {
+    menuVisible = true;
+    menuAnim = 1.0f;
+  }
 }
 
 void
@@ -94,44 +102,7 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
     if (fps > 0)
       fps = 1.0 / fps;
   }
-  ImGui::SetNextWindowSize(ImVec2(520, 560), ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_FirstUseEver);
-  ImGui::Begin("HackMatrix");
-  vector<string> debugMessages = loggerVector->fetch();
-  if (ImGui::BeginTabBar("Developer Menu")) {
-    if (ImGui::BeginTabItem("FPS")) {
-      ImGui::Text("%f fps", fps);
-      ImGui::EndTabItem();
-    }
-    if (ImGui::BeginTabItem("Debug Log")) {
-      for (const auto& msg : debugMessages) {
-        ImGui::TextWrapped("%s", msg.c_str());
-      }
-      ImGui::EndTabItem();
-    }
-    if (ImGui::BeginTabItem("Entity Editor")) {
-      if (ImGui::Button("+ Create Entity")) {
-        createNewEntity(); // Function to create an entity
-      }
-      ImGui::SameLine();
-      if (ImGui::Button("Persist All")) {
-        registry->saveAll();
-      }
-      renderEntities();
-      ImGui::EndTabItem();
-    }
-    const bool forceMultiplayerTab =
-      std::getenv("HACKMATRIX_IMGUI_MULTIPLAYER_TAB") != nullptr;
-    if (ImGui::BeginTabItem("Multiplayer",
-                            nullptr,
-                            forceMultiplayerTab ? ImGuiTabItemFlags_SetSelected
-                                                : 0)) {
-      gui.Render();
-      ImGui::EndTabItem();
-    }
-    ImGui::EndTabBar(); // Close the tab bar
-  }
-  ImGui::End();
+  renderMenu(gui, fps);
 
   renderChat();
   renderExitConfirm();
@@ -217,6 +188,146 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
   glUseProgram(prevProgram);
   glBindBuffer(GL_ARRAY_BUFFER, prevArray);
   glBindTexture(GL_TEXTURE_2D, prevTexture);
+}
+
+void
+EngineGui::renderMenu(MultiPlayer::Gui& gui, float fps)
+{
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  const float workW = viewport->WorkSize.x;
+  const float workH = viewport->WorkSize.y;
+  const float tabW = 26.0f;
+  const float tabH = std::min(140.0f, workH * 0.25f);
+  const float sideW = std::clamp(workW * 0.2f, 260.0f, workW * 0.4f);
+  const float panelW = std::max(200.0f, sideW - tabW);
+  const float margin = 8.0f;
+  const float panelH = std::max(200.0f, workH - margin * 2.0f);
+
+  const float dt = std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 0.1f);
+  const float target = menuVisible ? 1.0f : 0.0f;
+  const float speed = 1.0f / 0.16f;
+  if (menuAnim < target) {
+    menuAnim = std::min(target, menuAnim + dt * speed);
+  } else if (menuAnim > target) {
+    menuAnim = std::max(target, menuAnim - dt * speed);
+  }
+
+  const bool drawPanel = menuAnim > 0.001f || menuVisible;
+  if (drawPanel) {
+    const float panelX = -panelW + menuAnim * (tabW + panelW);
+    ImGui::SetNextWindowPos(
+      ImVec2(viewport->WorkPos.x + panelX, viewport->WorkPos.y + margin),
+      ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 6.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 4.0f));
+    ImGui::Begin("##hm_menu_panel",
+                 nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoCollapse);
+    ImGui::TextUnformatted("HackMatrix");
+    ImGui::SameLine(ImGui::GetWindowWidth() - 38.0f);
+    if (ImGui::SmallButton("<<")) {
+      menuVisible = false;
+    }
+    ImGui::Separator();
+
+    vector<string> debugMessages = loggerVector->fetch();
+    if (ImGui::BeginTabBar("Developer Menu",
+                           ImGuiTabBarFlags_FittingPolicyScroll)) {
+      if (ImGui::BeginTabItem("FPS")) {
+        ImGui::Text("%f fps", fps);
+        ImGui::EndTabItem();
+      }
+      if (ImGui::BeginTabItem("Debug Log")) {
+        for (const auto& msg : debugMessages) {
+          ImGui::TextWrapped("%s", msg.c_str());
+        }
+        ImGui::EndTabItem();
+      }
+      if (ImGui::BeginTabItem("Entity Editor")) {
+        if (ImGui::Button("+ Create Entity")) {
+          createNewEntity();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Persist All")) {
+          registry->saveAll();
+        }
+        renderEntities();
+        ImGui::EndTabItem();
+      }
+      const bool forceMultiplayerTab =
+        std::getenv("HACKMATRIX_IMGUI_MULTIPLAYER_TAB") != nullptr;
+      if (ImGui::BeginTabItem("Multiplayer",
+                              nullptr,
+                              forceMultiplayerTab ? ImGuiTabItemFlags_SetSelected
+                                                  : 0)) {
+        gui.Render();
+        ImGui::EndTabItem();
+      }
+      ImGui::EndTabBar();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+  }
+
+  // Edge tab: always visible, vertically centred on the left edge.
+  ImGui::SetNextWindowPos(
+    ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + (workH - tabH) * 0.5f),
+    ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(tabW, tabH), ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+  ImGui::Begin("##hm_menu_tab",
+               nullptr,
+               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground |
+                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+  ImGui::InvisibleButton("##hm_menu_tab_btn", ImVec2(tabW, tabH));
+  const bool hovered = ImGui::IsItemHovered();
+  if (ImGui::IsItemClicked()) {
+    menuVisible = !menuVisible;
+  }
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  // Window draw lists take screen coordinates, not window-local ones.
+  const ImVec2 p0 = ImGui::GetWindowPos();
+  const ImVec2 p1(p0.x + tabW, p0.y + tabH);
+  const ImU32 bg = hovered ? IM_COL32(60, 90, 140, 235)
+                           : IM_COL32(32, 42, 58, 225);
+  const ImU32 border = IM_COL32(110, 150, 200, 230);
+  draw->AddRectFilled(ImVec2(p0.x + 1.0f, p0.y + 1.0f),
+                      ImVec2(p1.x, p1.y - 1.0f),
+                      bg,
+                      6.0f);
+  draw->AddRect(ImVec2(p0.x + 1.0f, p0.y + 1.0f),
+                ImVec2(p1.x, p1.y - 1.0f),
+                border,
+                6.0f);
+  const ImVec2 centre(p0.x + tabW * 0.5f, p0.y + tabH * 0.5f);
+  constexpr float kArrow = 6.0f;
+  const ImU32 fg = IM_COL32(230, 238, 248, 255);
+  if (menuVisible) {
+    draw->AddLine(ImVec2(centre.x + kArrow * 0.5f, centre.y - kArrow),
+                  ImVec2(centre.x - kArrow * 0.5f, centre.y),
+                  fg,
+                  2.0f);
+    draw->AddLine(ImVec2(centre.x - kArrow * 0.5f, centre.y),
+                  ImVec2(centre.x + kArrow * 0.5f, centre.y + kArrow),
+                  fg,
+                  2.0f);
+  } else {
+    draw->AddLine(ImVec2(centre.x - kArrow * 0.5f, centre.y - kArrow),
+                  ImVec2(centre.x + kArrow * 0.5f, centre.y),
+                  fg,
+                  2.0f);
+    draw->AddLine(ImVec2(centre.x + kArrow * 0.5f, centre.y),
+                  ImVec2(centre.x - kArrow * 0.5f, centre.y + kArrow),
+                  fg,
+                  2.0f);
+  }
+  ImGui::End();
+  ImGui::PopStyleVar();
 }
 
 void
