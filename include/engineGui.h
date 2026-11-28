@@ -14,6 +14,15 @@
 #include "logger.h"
 #include "entity.h"
 #include "system_settings.h"
+#include "components/Bootable.h"
+#include "components/Door.h"
+#include "components/Key.h"
+#include "components/Light.h"
+#include "components/Lock.h"
+#include "components/Parent.h"
+#include "components/RotateMovement.h"
+#include "components/Scriptable.h"
+#include "components/TranslateMovement.h"
 
 using namespace std;
 
@@ -47,6 +56,49 @@ class EngineGui
   // Scene Editor: outliner + inspector dock around the existing 3D viewport.
   // Phase 1 keeps the runtime data model (Entity/Positionable/components) and
   // provides selection, creation, duplication, deletion and component editing.
+  // Close discards everything edited since the last Save; Save recaptures
+  // this baseline. Snapshot covers all persisted scene components but leaves
+  // runtime-only components (Wayland apps, remote windows) untouched.
+  struct SceneEntitySnapshot
+  {
+    int64_t entityId = 0;
+    bool hasModel = false;
+    std::string modelPath;
+    std::string modelNode;
+    bool hasPositionable = false;
+    glm::vec3 position{ 0.0f };
+    glm::vec3 origin{ 0.0f };
+    glm::vec3 rotation{ 0.0f };
+    float scale = 1.0f;
+    bool hasLight = false;
+    glm::vec3 lightColor{ 1.0f };
+    std::optional<Door> door;
+    std::optional<Key> key;
+    std::optional<Lock> lock;
+    std::optional<Parent> parent;
+    std::optional<RotateMovement> rotateMovement;
+    std::optional<TranslateMovement> translateMovement;
+    bool hasScriptable = false;
+    std::string script;
+    ScriptLanguage scriptLanguage = CPP;
+    bool hasBootable = false;
+    std::string bootCmd;
+    std::string bootArgs;
+    bool bootKillOnExit = false;
+    bool bootTransparent = false;
+    bool bootOnStartup = false;
+    std::optional<std::string> bootName;
+    int bootWidth = 0;
+    int bootHeight = 0;
+    int bootX = 0;
+    int bootY = 0;
+  };
+  std::vector<SceneEntitySnapshot> sceneBaseline;
+  bool sceneBaselineValid = false;
+  void captureSceneBaseline();
+  void restoreSceneBaseline();
+  void saveSceneChanges();
+
   bool sceneEditorOpen = false;
   entt::entity sceneSelection = entt::null;
   std::vector<entt::entity> sceneSelectionSet;
@@ -143,6 +195,9 @@ public:
   bool isExitConfirmOpen() const { return exitConfirmOpen; }
   bool isSceneEditorOpen() const { return sceneEditorOpen; }
   entt::entity getSceneSelection() const { return sceneSelection; }
+  // Used by Engine shutdown before its final saveAll(): unsaved editor state
+  // must not leak into the database when the process exits.
+  void discardSceneChangesIfOpen();
   void openExitConfirm()
   {
     exitConfirmOpen = true;

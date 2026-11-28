@@ -85,6 +85,8 @@ HackMatrix 使用 `wofi`.
 
 Scene Editor 是原来的 Entity Editor 重做版：左侧 `Outliner` 显示场景实体和父子层级，支持搜索、选中、`Ctrl` 多选和拖拽 reparent；右侧 `Inspector` 编辑选中实体的 Transform 和组件；中间保留 3D 视野，点击模型可直接选取并显示选中包围圈。`WASD` 移动相机，按住鼠标中键拖动视角；顶部提供 `Move / Rotate / Scale`（快捷键 `Alt+W / Alt+E / Alt+R`）、`Undo / Redo`、`Resume / Pause`；选中后拖动红/绿/蓝 `X/Y/Z` 轴即可移动、旋转或缩放实体，松手提交到多人世界。左下角 `Assets` 会扫描 `vox/`、`assets/`、`models/`，`Add` 导入模型；勾选 `Import as parts` 时按 Assimp 节点拆成多个实体。模型按路径缓存，同一文件只加载一份 GPU 数据。多人连接时结构编辑会锁定，只允许会同步的 Transform 编辑。
 
+`Close` 是取消：会恢复到上次 `Save`（或刚打开编辑器）时的场景状态；只有点击 `Save` 才会把当前改动写入数据库。关闭整个程序时如果编辑器还开着，也会先丢弃未保存的编辑器改动。
+
 See the [wiki page](https://github.com/collinalexbell/HackMatrix/wiki/Game-Engine) for more info about the game engine and how to use the editor.
 
 这个菜单还有Multyplayer模式，功能大致是可以让其他使用hackmartix的用户可以加入其他人的环境（有点意思，原作者没有说明这个功能，但我发现这个只是能相互看到各自的头像，不能多窗口互联）

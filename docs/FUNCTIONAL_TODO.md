@@ -97,6 +97,7 @@ Multiplayer
   - `Import as parts` 按 Assimp 节点创建多个实体，使用节点的世界变换写入 `Positionable`，支持 Blender 导出的多物体场景；
   - Scene Editor 打开时默认暂停旋转/翻译模拟，可点 `Resume` 预览运行效果；关闭编辑器自动恢复；
   - 多人连接时锁定结构编辑（New / Duplicate / Delete / reparent / Asset 导入），只允许会通过 `EntityTransform` 同步的 Transform 编辑，避免本地 DB 与权威世界分叉；
+  - `Close` 是取消：打开编辑器或点击 `Save` 时对全部持久化场景组件做快照；`Close`/`Esc` 恢复快照并清理新增/删除的实体、组件增删和 Transform，只有 `Save` 写库并更新快照；程序退出时若编辑器仍打开，先恢复快照再保存，避免未保存改动落库；
   - 场景指纹升级 v6，将 `Model.node` 纳入静态场景哈希；单测 98/98 通过。
 
 - 2026-11-28：**Scene Editor 平移 gizmo**：

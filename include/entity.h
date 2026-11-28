@@ -24,6 +24,7 @@ public:
   void addPersister(std::shared_ptr<SQLPersister>);
   void depersist(entt::entity);
   entt::entity createPersistent();
+  entt::entity createPersistentWithId(int64_t entityId);
   void createTablesIfNeeded();
   void saveAll();
   void save(entt::entity);

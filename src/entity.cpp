@@ -90,6 +90,18 @@ EntityRegistry::createPersistent()
   return rv;
 }
 
+entt::entity
+EntityRegistry::createPersistentWithId(int64_t entityId)
+{
+  SQLite::Statement query(*db, "INSERT OR REPLACE INTO Entity (id) VALUES (?)");
+  query.bind(1, entityId);
+  query.exec();
+  auto rv = this->create();
+  emplace<Persistable>(rv, entityId);
+  entityLocator[entityId] = rv;
+  return rv;
+}
+
 void
 EntityRegistry::depersist(entt::entity entity)
 {

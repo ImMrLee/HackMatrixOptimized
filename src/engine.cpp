@@ -144,6 +144,11 @@ Engine::Engine(char** envp, EngineOptions options)
 
 Engine::~Engine()
 {
+  // Closing the Scene Editor is a cancel; make sure unsaved editor state is
+  // not persisted by the final saveAll() below.
+  if (engineGui) {
+    engineGui->discardSceneChangesIfOpen();
+  }
   // The API poll thread references world/renderer/controls, so stop it first.
   api.reset();
   controls.reset();

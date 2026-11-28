@@ -829,6 +829,7 @@ EngineGui::setSceneEditorOpen(bool open)
     // The sidebar and the editor both want the left edge; close the narrow
     // developer menu so the outliner has room.
     menuVisible = false;
+    captureSceneBaseline();
     sceneSimulationPaused = true;
     if (world) {
       world->setSimulationPaused(true);
@@ -847,6 +848,8 @@ EngineGui::setSceneEditorOpen(bool open)
       // Closing mid-drag should still commit the last previewed transform.
       endSceneGizmoDrag();
     }
+    // Close is a cancel: revert everything edited since the last Save.
+    restoreSceneBaseline();
     if (world) {
       world->setSimulationPaused(false);
     }
@@ -939,6 +942,313 @@ EngineGui::pruneSceneSelection()
     sceneSelection =
       sceneSelectionSet.empty() ? entt::null : sceneSelectionSet.back();
   }
+}
+
+void
+EngineGui::captureSceneBaseline()
+{
+  sceneBaseline.clear();
+  for (auto [entity, persistable] : registry->view<Persistable>().each()) {
+    SceneEntitySnapshot snapshot;
+    snapshot.entityId = persistable.entityId;
+
+    if (auto* model = registry->try_get<Model>(entity)) {
+      snapshot.hasModel = true;
+      snapshot.modelPath = model->path;
+      snapshot.modelNode = model->node;
+    }
+    if (auto* positionable = registry->try_get<Positionable>(entity)) {
+      snapshot.hasPositionable = true;
+      snapshot.position = positionable->pos;
+      snapshot.origin = positionable->origin;
+      snapshot.rotation = positionable->rotate;
+      snapshot.scale = positionable->scale;
+    }
+    if (auto* light = registry->try_get<Light>(entity)) {
+      snapshot.hasLight = true;
+      snapshot.lightColor = light->color;
+    }
+    if (auto* door = registry->try_get<Door>(entity)) {
+      snapshot.door = *door;
+    }
+    if (auto* key = registry->try_get<Key>(entity)) {
+      snapshot.key = *key;
+    }
+    if (auto* lock = registry->try_get<Lock>(entity)) {
+      snapshot.lock = *lock;
+    }
+    if (auto* parent = registry->try_get<Parent>(entity)) {
+      snapshot.parent = *parent;
+    }
+    if (auto* rotate = registry->try_get<RotateMovement>(entity)) {
+      snapshot.rotateMovement = *rotate;
+    }
+    if (auto* translate = registry->try_get<TranslateMovement>(entity)) {
+      snapshot.translateMovement = *translate;
+    }
+    if (auto* script = registry->try_get<Scriptable>(entity)) {
+      snapshot.hasScriptable = true;
+      snapshot.script = script->getScript();
+      snapshot.scriptLanguage = script->language;
+    }
+    if (auto* bootable = registry->try_get<Bootable>(entity)) {
+      snapshot.hasBootable = true;
+      snapshot.bootCmd = bootable->cmd;
+      snapshot.bootArgs = bootable->args;
+      snapshot.bootKillOnExit = bootable->killOnExit;
+      snapshot.bootTransparent = bootable->transparent;
+      snapshot.bootOnStartup = bootable->bootOnStartup;
+      snapshot.bootName = bootable->name;
+      snapshot.bootWidth = bootable->getWidth();
+      snapshot.bootHeight = bootable->getHeight();
+      snapshot.bootX = bootable->x;
+      snapshot.bootY = bootable->y;
+    }
+
+    sceneBaseline.push_back(std::move(snapshot));
+  }
+  sceneBaselineValid = true;
+}
+
+void
+EngineGui::restoreSceneBaseline()
+{
+  if (!sceneBaselineValid) {
+    return;
+  }
+
+  sceneGizmoDragAxis = -1;
+  sceneGizmoEntity = entt::null;
+  sceneGizmoHoverAxis = -1;
+  sceneGizmoTargets.clear();
+  sceneGizmoStartPositions.clear();
+  sceneGizmoStartRotations.clear();
+  sceneGizmoStartScales.clear();
+  sceneCameraDragActive = false;
+
+  std::unordered_set<int64_t> baselineIds;
+  for (const auto& snapshot : sceneBaseline) {
+    baselineIds.insert(snapshot.entityId);
+  }
+
+  std::vector<entt::entity> currentEntities;
+  for (auto [entity, persistable] : registry->view<Persistable>().each()) {
+    currentEntities.push_back(entity);
+  }
+  for (const entt::entity entity : currentEntities) {
+    auto* persistable = registry->try_get<Persistable>(entity);
+    if (persistable && !baselineIds.contains(persistable->entityId)) {
+      registry->depersist(entity);
+    }
+  }
+
+  std::unordered_map<int64_t, entt::entity> entitiesById;
+  for (auto [entity, persistable] : registry->view<Persistable>().each()) {
+    entitiesById[persistable.entityId] = entity;
+  }
+  for (const auto& snapshot : sceneBaseline) {
+    if (!entitiesById.contains(snapshot.entityId)) {
+      entitiesById[snapshot.entityId] =
+        registry->createPersistentWithId(snapshot.entityId);
+    }
+  }
+
+  std::vector<entt::entity> transformChanged;
+  for (const auto& snapshot : sceneBaseline) {
+    const entt::entity entity = entitiesById[snapshot.entityId];
+
+    auto* model = registry->try_get<Model>(entity);
+    if (snapshot.hasModel) {
+      if (!model || model->path != snapshot.modelPath ||
+          model->node != snapshot.modelNode) {
+        registry->emplace_or_replace<Model>(
+          entity, snapshot.modelPath, snapshot.modelNode);
+      }
+    } else if (model) {
+      registry->removePersistent<Model>(entity);
+    }
+
+    auto* positionable = registry->try_get<Positionable>(entity);
+    if (snapshot.hasPositionable) {
+      if (!positionable) {
+        registry->emplace<Positionable>(entity,
+                                       snapshot.position,
+                                       snapshot.origin,
+                                       snapshot.rotation,
+                                       snapshot.scale);
+        transformChanged.push_back(entity);
+      } else if (positionable->pos != snapshot.position ||
+                 positionable->origin != snapshot.origin ||
+                 positionable->rotate != snapshot.rotation ||
+                 positionable->scale != snapshot.scale) {
+        positionable->pos = snapshot.position;
+        positionable->origin = snapshot.origin;
+        positionable->rotate = snapshot.rotation;
+        positionable->scale = snapshot.scale;
+        positionable->damage();
+        transformChanged.push_back(entity);
+      }
+    } else if (positionable) {
+      registry->removePersistent<Positionable>(entity);
+    }
+
+    if (snapshot.hasLight) {
+      if (auto* light = registry->try_get<Light>(entity)) {
+        light->color = snapshot.lightColor;
+      } else {
+        registry->emplace<Light>(entity, snapshot.lightColor);
+      }
+    } else if (registry->any_of<Light>(entity)) {
+      registry->removePersistent<Light>(entity);
+    }
+
+    if (snapshot.door.has_value()) {
+      if (auto* door = registry->try_get<Door>(entity)) {
+        *door = snapshot.door.value();
+      } else {
+        registry->emplace<Door>(entity, snapshot.door.value());
+      }
+    } else if (registry->any_of<Door>(entity)) {
+      registry->removePersistent<Door>(entity);
+    }
+
+    if (snapshot.key.has_value()) {
+      if (auto* key = registry->try_get<Key>(entity)) {
+        *key = snapshot.key.value();
+      } else {
+        registry->emplace<Key>(entity, snapshot.key.value());
+      }
+    } else if (registry->any_of<Key>(entity)) {
+      registry->removePersistent<Key>(entity);
+    }
+
+    if (snapshot.lock.has_value()) {
+      if (auto* lock = registry->try_get<Lock>(entity)) {
+        *lock = snapshot.lock.value();
+      } else {
+        registry->emplace<Lock>(entity, snapshot.lock.value());
+      }
+    } else if (registry->any_of<Lock>(entity)) {
+      registry->removePersistent<Lock>(entity);
+    }
+
+    if (snapshot.parent.has_value()) {
+      if (auto* parent = registry->try_get<Parent>(entity)) {
+        *parent = snapshot.parent.value();
+      } else {
+        registry->emplace<Parent>(entity, snapshot.parent.value());
+      }
+    } else if (registry->any_of<Parent>(entity)) {
+      registry->removePersistent<Parent>(entity);
+    }
+
+    if (snapshot.rotateMovement.has_value()) {
+      if (auto* rotate = registry->try_get<RotateMovement>(entity)) {
+        *rotate = snapshot.rotateMovement.value();
+      } else {
+        registry->emplace<RotateMovement>(
+          entity, snapshot.rotateMovement.value());
+      }
+    } else if (registry->any_of<RotateMovement>(entity)) {
+      registry->removePersistent<RotateMovement>(entity);
+    }
+
+    if (snapshot.translateMovement.has_value()) {
+      if (auto* translate = registry->try_get<TranslateMovement>(entity)) {
+        *translate = snapshot.translateMovement.value();
+      } else {
+        registry->emplace<TranslateMovement>(
+          entity, snapshot.translateMovement.value());
+      }
+    } else if (registry->any_of<TranslateMovement>(entity)) {
+      registry->removePersistent<TranslateMovement>(entity);
+    }
+
+    auto* script = registry->try_get<Scriptable>(entity);
+    if (snapshot.hasScriptable) {
+      if (!script) {
+        registry->emplace<Scriptable>(
+          entity, snapshot.script, snapshot.scriptLanguage);
+      } else {
+        if (script->language != snapshot.scriptLanguage) {
+          script->language = snapshot.scriptLanguage;
+        }
+        if (script->getScript() != snapshot.script) {
+          script->setScript(snapshot.script);
+        }
+      }
+    } else if (script) {
+      registry->removePersistent<Scriptable>(entity);
+    }
+
+    auto* bootable = registry->try_get<Bootable>(entity);
+    if (snapshot.hasBootable) {
+      if (!bootable) {
+        registry->emplace<Bootable>(entity,
+                                    snapshot.bootCmd,
+                                    snapshot.bootArgs,
+                                    snapshot.bootKillOnExit,
+                                    std::nullopt,
+                                    snapshot.bootTransparent,
+                                    snapshot.bootName,
+                                    snapshot.bootOnStartup,
+                                    snapshot.bootWidth,
+                                    snapshot.bootHeight,
+                                    snapshot.bootX,
+                                    snapshot.bootY);
+      } else {
+        bootable->cmd = snapshot.bootCmd;
+        bootable->args = snapshot.bootArgs;
+        bootable->killOnExit = snapshot.bootKillOnExit;
+        bootable->transparent = snapshot.bootTransparent;
+        bootable->bootOnStartup = snapshot.bootOnStartup;
+        bootable->name = snapshot.bootName;
+        bootable->x = snapshot.bootX;
+        bootable->y = snapshot.bootY;
+        if (bootable->getWidth() != snapshot.bootWidth ||
+            bootable->getHeight() != snapshot.bootHeight) {
+          systems::resizeBootable(registry,
+                                  entity,
+                                  snapshot.bootWidth,
+                                  snapshot.bootHeight);
+        }
+      }
+    } else if (bootable) {
+      registry->removePersistent<Bootable>(entity);
+    }
+  }
+
+  sceneSelectionSet.clear();
+  sceneSelection = entt::null;
+  sceneAddComponentOpen = false;
+  sceneAddComponentEntity = entt::null;
+  sceneUndoStack.clear();
+  sceneRedoStack.clear();
+
+  // Write the restored baseline back so the database matches the last Save.
+  registry->saveAll();
+  for (const entt::entity entity : transformChanged) {
+    if (registry->valid(entity)) {
+      commitSceneTransform(entity);
+    }
+  }
+}
+
+void
+EngineGui::saveSceneChanges()
+{
+  registry->saveAll();
+  captureSceneBaseline();
+}
+
+void
+EngineGui::discardSceneChangesIfOpen()
+{
+  if (!sceneEditorOpen) {
+    return;
+  }
+  restoreSceneBaseline();
+  sceneEditorOpen = false;
 }
 
 void
@@ -1235,11 +1545,17 @@ EngineGui::renderSceneToolbar(const ImVec2& pos, const ImVec2& size)
   ImGui::EndDisabled();
   ImGui::SameLine();
   if (ImGui::Button("Save")) {
-    registry->saveAll();
+    saveSceneChanges();
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Save scene. Close without Save restores the last saved state.");
   }
   ImGui::SameLine();
   if (ImGui::Button("Close")) {
     setSceneEditorOpen(false);
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Discard changes since the last Save and close.");
   }
 
   ImGui::SameLine();
