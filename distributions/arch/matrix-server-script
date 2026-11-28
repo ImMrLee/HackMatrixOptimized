@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BIN="/usr/lib/hackmatrix-server/matrix-server"
+DATA_DIR="${HACKMATRIX_SERVER_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/hackmatrix-server}"
+
+mkdir -p "$DATA_DIR"
+
+# Seed the writable scene DB once. The server persists Positionable/ServerVoxels
+# into this copy, so package upgrades do not overwrite player state.
+if [ ! -f "$DATA_DIR/matrix.db" ]; then
+  cp /usr/share/hackmatrix-server/matrix.db "$DATA_DIR/matrix.db"
+fi
+
+cd "$DATA_DIR"
+
+# Default to the writable copy; a later --db in "$@" still wins.
+exec "$BIN" --db "$DATA_DIR/matrix.db" "$@"

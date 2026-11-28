@@ -85,6 +85,13 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-28：**专用服务器独立 Arch 包**：
+  - 新增 `distributions/arch/PKGBUILD-server` 与 `matrix-server-script`，只构建 `matrix-server`，产物 `hackmatrix-server-git-*.pkg.tar.zst`，与主程序包可并存；
+  - 运行时依赖仅 `sqlite`、`spdlog`、`fmt`；CMake 配置仍需要桌面构建依赖；
+  - 安装后 `hackmatrix-server` 包装脚本把 seed DB 复制到 `$XDG_DATA_HOME/hackmatrix-server/matrix.db`，服务器只写副本，升级不覆盖玩家状态；`--port`/`--db` 仍可覆盖；
+  - 实测包内二进制 + seed DB 可正常启动（41 entities / 35 positionables），wrapper 能创建数据目录并启动；
+  - 仓库外 helper `/home/arthur/文档/buildhackmartix` 增加 `server` 模式，输出仍为 `~/文档/HackMatrix-arch`；单测 97/97 通过。
+
 - 2026-11-28：**场景 DB 去作者机器路径**：
   - `Model.path` 的 `/home/collin/KuberLogos/vox/*.obj` 改为 `vox/*.obj`（其中 `temple.obj`、`water.obj`、`lightFixtureNYC.obj` 本地/仓库内不存在，仍会被“缺失模型”逻辑跳过）；
   - `Bootable.cmd/args` 的 `/home/collin/...` 改为 `kitty`、`apps/code.sh`、`apps/.dialog.conf` 等可移植形式；

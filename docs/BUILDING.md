@@ -326,6 +326,35 @@ makepkg -f
 sudo pacman -U "$HOME"/HackMatrix-arch/hackmatrix-git-*.pkg.tar.zst
 ```
 
+### 专用服务器包
+
+只打包无头服务器，不影响主程序包：
+
+```bash
+rm -rf /tmp/hm-pkg-server
+mkdir -p /tmp/hm-pkg-server
+cp distributions/arch/PKGBUILD-server /tmp/hm-pkg-server/PKGBUILD
+cp distributions/arch/matrix-server-script /tmp/hm-pkg-server/
+
+mkdir -p "$HOME/HackMatrix-arch"
+cd /tmp/hm-pkg-server
+HACKMATRIX_LOCAL_SOURCE=<project_dir> \
+PKGDEST="$HOME/HackMatrix-arch" \
+MAKEFLAGS="-j$(nproc)" \
+makepkg -f
+```
+
+产物：
+
+```text
+~/HackMatrix-arch/hackmatrix-server-git-<版本>-x86_64.pkg.tar.zst
+```
+
+- 包名 `hackmatrix-server-git`，与主程序 `hackmatrix-git` 可以并存；
+- 运行时只依赖 `sqlite`、`spdlog`、`fmt`（`ldd build/matrix-server` 可验证）；但 CMake 配置仍会探测桌面依赖，因此 `makedepends` 与主程序基本相同；
+- 安装后运行 `hackmatrix-server`：包装脚本会把 seed DB 复制到 `$XDG_DATA_HOME/hackmatrix-server/matrix.db`，服务器只写这份副本，升级包不会覆盖玩家状态；
+- 默认端口 1234；`hackmatrix-server --port 7777`，`--db` 仍可覆盖默认数据库。
+
 ### 注意点
 
 - 不要用 `sudo makepkg`，用当前用户跑，最后安装才用 `sudo pacman -U`。

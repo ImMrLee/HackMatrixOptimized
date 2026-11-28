@@ -17,6 +17,8 @@ cmake --build build -j"$(nproc)" --target matrix-server
 --db PATH   场景数据库路径（默认 db/matrix.db）
 ```
 
+Arch 包安装后可直接运行 `hackmatrix-server`：包装脚本会把 seed DB 复制到 `$XDG_DATA_HOME/hackmatrix-server/matrix.db`，服务器只写这份副本，升级包不会覆盖玩家状态。打包步骤见 `docs/BUILDING.md` 的“专用服务器包”。
+
 ## 当前功能
 
 - 从场景数据库中加载 `Entity` 与 `Positionable` 行，并写入服务器端的 `EntityRegistry`（参见 `src/server/WorldSimulation.cpp`）。
@@ -37,7 +39,7 @@ cmake --build build -j"$(nproc)" --target matrix-server
   - 启动时会先恢复这两类数据，再发送首份快照。
   - 应使用**服务器拥有的数据库副本**（例如 `cp db/matrix.db /srv/hackmatrix/world.db`），以防客户端持久化本地场景时覆盖服务器数据库。
 
-玩家移动目前仍由客户端上报（服务端只验证 `PLAYER_UPDATE` 的包长度，随后保存并广播）。输入驱动的移动权威、NPC、管理员命令、Model/Light 延迟加载以及独立 Arch 软件包仍有待实现。
+玩家移动目前仍由客户端上报（服务端只验证 `PLAYER_UPDATE` 的包长度，随后保存并广播）。输入驱动的移动权威、NPC、管理员命令以及 Model/Light 延迟加载仍有待实现；独立 Arch 包（`hackmatrix-server-git`）已提供。
 
 ## 为什么采用这种结构
 
@@ -53,6 +55,6 @@ cmake --build build -j"$(nproc)" --target matrix-server
    - 使用服务器作为发送者，通过通道 8 发送快照和增量更新。
 3. 移除客户端侧的权威选举逻辑；服务器始终是权威方。
 4. 让服务器成为 `matrix.db` 的唯一写入者；客户端加载只读副本，或直接接收服务器发送的状态。
-5. 添加 systemd/Docker 打包及独立 Arch 软件包（`hackmatrix-server`），并实现配置、能力和协议版本握手。
+5. 添加 systemd/Docker 打包，并实现配置、能力和协议版本握手（独立 Arch 包 `hackmatrix-server-git` 已提供）。
 
 窗口共享仍采用客户端到客户端的 WebRTC；服务器只负责中继信令、窗口元数据和控制授权。跨 NAT 部署可以额外配置 TURN 中继。

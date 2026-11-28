@@ -1,0 +1,131 @@
+# Maintainer: Alan Arthur <asd3245908066@outlook.com>
+#
+# Headless server package. It builds only the `matrix-server` target and installs
+# a seed scene database plus a wrapper that keeps player state in
+# $XDG_DATA_HOME/hackmatrix-server.
+#
+# Arch [extra] now ships wlroots0.20, but HackMatrix still configures against the
+# wlroots 0.19 ABI. Install the AUR package before building:
+#   yay -S wlroots0.19      # or: paru -S wlroots0.19
+#
+# Build this package through the repo helper:
+#   /path/to/buildhackmartix server
+
+pkgname=hackmatrix-server-git
+pkgrel=1
+pkgdesc="Headless multiplayer server for HackMatrix"
+pkgver=r1154.1.stable.r327.gddbd86b
+arch=('x86_64')
+url="https://github.com/ImMrLee/HackMatrixOptimized"
+license=('MIT')
+provides=("hackmatrix-server")
+conflicts=("hackmatrix-server")
+
+# Runtime: the server links only sqlite/spdlog/fmt (no GL, wlroots or ImGui).
+depends=(
+  'sqlite'
+  'spdlog'
+  'fmt'
+)
+
+# Configure-time dependencies. The top-level CMake still probes the desktop
+# stack even when only matrix-server is built.
+makedepends=(
+  'base-devel'
+  'cmake'
+  'git'
+  'wayland'
+  'wayland-protocols'
+  'wlroots0.19'
+  'protobuf'
+  'zeromq'
+  'assimp'
+  'mesa'
+  'libglvnd'
+  'ffmpeg'
+  'gstreamer'
+  'gst-plugins-base'
+  'gst-plugins-good'
+  'gst-plugins-bad'
+  'gst-libav'
+  'libnice'
+  'libxcb'
+  'pixman'
+  'libxkbcommon'
+  'libdrm'
+  'meson'
+  'ninja'
+)
+
+# Set HACKMATRIX_LOCAL_SOURCE=/path/to/HackMatrix to package the current
+# working tree instead of cloning the repository. Copy this PKGBUILD and
+# matrix-server-script to an empty directory first:
+#
+#   mkdir -p /tmp/hm-pkg-server
+#   cp PKGBUILD-server /tmp/hm-pkg-server/PKGBUILD
+#   cp matrix-server-script /tmp/hm-pkg-server/
+#   cd /tmp/hm-pkg-server
+#   HACKMATRIX_LOCAL_SOURCE=/path/to/HackMatrix makepkg -f
+_local_source="${HACKMATRIX_LOCAL_SOURCE:-}"
+
+if [[ -n "$_local_source" ]]; then
+  source=(
+    "matrix-server-script"
+  )
+  sha256sums=(
+    'SKIP'
+  )
+else
+  source=(
+    "HackMatrix::git+https://github.com/ImMrLee/HackMatrixOptimized.git"
+    "matrix-server-script"
+  )
+  sha256sums=(
+    'SKIP'
+    'SKIP'
+  )
+fi
+
+pkgver() {
+  if [[ -n "$_local_source" ]]; then
+    cd "$_local_source"
+  else
+    cd "$srcdir/HackMatrix"
+  fi
+  printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git describe --long --tags --always | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//')"
+}
+
+prepare() {
+  if [[ -n "$_local_source" ]]; then
+    return 0
+  fi
+  cd "$srcdir/HackMatrix"
+  if pkg-config --exists wlroots-0.19; then
+    git submodule update --init tracy
+  else
+    git submodule update --init --recursive
+  fi
+}
+
+build() {
+  local src="${_local_source:-$srcdir/HackMatrix}"
+  cmake -S "$src" -B "$srcdir/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DMATRIX_BUILD_TESTS=OFF \
+    -DMATRIX_ENABLE_WEBGUI=OFF
+  cmake --build "$srcdir/build" --target matrix-server -j"$(nproc)"
+}
+
+package() {
+  local src="${_local_source:-$srcdir/HackMatrix}"
+  install -Dm755 "$srcdir/build/matrix-server" \
+    "$pkgdir/usr/lib/hackmatrix-server/matrix-server"
+  install -Dm755 "$srcdir/matrix-server-script" \
+    "$pkgdir/usr/bin/hackmatrix-server"
+  install -Dm644 "$src/db/matrix.db" \
+    "$pkgdir/usr/share/hackmatrix-server/matrix.db"
+  install -Dm644 "$src/docs/SERVER.md" \
+    "$pkgdir/usr/share/doc/hackmatrix-server/SERVER.md"
+  install -Dm644 "$src/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
