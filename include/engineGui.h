@@ -105,6 +105,7 @@ class EngineGui
   entt::entity sceneAddComponentEntity = entt::null;
   bool sceneAddComponentOpen = false;
   char sceneFilter[256] = {};
+  bool sceneShowAppEntities = true;
   void setSceneEditorOpen(bool open);
   bool isSceneEntitySelected(entt::entity entity) const;
   void selectSceneEntity(entt::entity entity, bool additive);

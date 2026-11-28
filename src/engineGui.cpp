@@ -615,17 +615,19 @@ sceneEntityLabel(const std::shared_ptr<EntityRegistry>& registry,
                  entt::entity entity)
 {
   if (auto* bootable = registry->try_get<Bootable>(entity)) {
+    std::string name = "Application";
     if (bootable->name.has_value() && !bootable->name->empty()) {
-      return bootable->name.value();
-    }
-    if (!bootable->cmd.empty()) {
-      const std::string name =
+      name = bootable->name.value();
+    } else if (!bootable->cmd.empty()) {
+      const std::string commandName =
         std::filesystem::path(bootable->cmd).filename().string();
-      if (!name.empty()) {
-        return name;
+      if (!commandName.empty()) {
+        name = commandName;
       }
     }
-    return "Application";
+    // These are persisted app definitions, not necessarily running processes.
+    return name + (bootable->pid.has_value() ? " (running)"
+                                             : " (not running)");
   }
   if (auto* model = registry->try_get<Model>(entity)) {
     if (!model->path.empty()) {
@@ -1650,6 +1652,11 @@ EngineGui::renderSceneOutliner(const ImVec2& pos, const ImVec2& size)
                            "Search entities...",
                            sceneFilter,
                            IM_ARRAYSIZE(sceneFilter));
+  ImGui::Checkbox("Apps", &sceneShowAppEntities);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip(
+      "Show persisted Bootable app definitions (not only running windows).");
+  }
 
   struct SceneNode
   {
@@ -1687,6 +1694,9 @@ EngineGui::renderSceneOutliner(const ImVec2& pos, const ImVec2& size)
   const std::string filterLower = sceneLower(sceneFilter);
 
   const auto drawRow = [&](const SceneNode& node, int depth) {
+    if (!sceneShowAppEntities && registry->any_of<Bootable>(node.entity)) {
+      return;
+    }
     if (!sceneEntityMatches(registry, node.entity, node.id, filterLower)) {
       return;
     }
@@ -1699,6 +1709,17 @@ EngineGui::renderSceneOutliner(const ImVec2& pos, const ImVec2& size)
                              std::to_string(node.id) + "###scene_node";
     if (ImGui::Selectable(text.c_str(), selected)) {
       selectSceneEntity(node.entity, ImGui::GetIO().KeyCtrl);
+    }
+    if (ImGui::IsItemHovered()) {
+      if (auto* bootable = registry->try_get<Bootable>(node.entity)) {
+        ImGui::SetTooltip("cmd: %s %s\n%s\npid: %s",
+                          bootable->cmd.c_str(),
+                          bootable->args.c_str(),
+                          bootable->bootOnStartup ? "boot on startup: yes"
+                                                  : "boot on startup: no",
+                          bootable->pid.has_value() ? "running"
+                                                    : "not running");
+      }
     }
     if (!structureLocked && ImGui::BeginDragDropSource()) {
       const int64_t childId = node.id;

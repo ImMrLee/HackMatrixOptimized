@@ -91,6 +91,7 @@ Multiplayer
   - 修复 Parent 组件的删除按钮误删 Positionable，以及空 Parent 点 `Remove Child` 对空 vector `pop_back()`；
   - 修复 Bootable 长 `cmd`/`args`/`name` 用 128 字节 `strcpy` 造成的栈溢出，改为 1024 字节缓冲 + `snprintf`；
   - 添加已存在的组件时不再直接 `emplace` 触发 entt 断言：可替换类型用 `emplace_or_replace`，Light/Scriptable 走字段更新；
+  - Outliner 对 `Bootable` 应用定义显示 `(running)` / `(not running)`，悬停显示 cmd/args/pid/boot_on_startup；新增 `Apps` 勾选框可隐藏这些持久化应用实体，避免与当前打开窗口混淆；
   - 98/98 单测通过。
 
 - 2026-11-28：**Scene Editor 完整编辑能力**：
