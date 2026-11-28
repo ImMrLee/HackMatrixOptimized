@@ -57,6 +57,22 @@ class EngineGui
   void drawSceneSelectionOverlay(const ImVec2& clipMin, const ImVec2& clipMax);
   entt::entity duplicateEntity(entt::entity source);
 
+  // Translate gizmo: three screen-space axis handles at the selected
+  // Positionable. Edits are applied locally while dragging and committed to
+  // the network on release.
+  int sceneGizmoHoverAxis = -1;
+  int sceneGizmoDragAxis = -1;
+  entt::entity sceneGizmoEntity = entt::null;
+  ImVec2 sceneGizmoStartMouse{ 0.0f, 0.0f };
+  glm::vec3 sceneGizmoStartPos{ 0.0f };
+  glm::vec2 sceneGizmoAxisScreen{ 0.0f };
+  float sceneGizmoWorldPerPixel = 0.0f;
+  void renderSceneGizmo(const ImVec2& clipMin, const ImVec2& clipMax);
+  bool handleSceneGizmoInput(const ImVec2& mouse, bool mouseInView);
+  void updateSceneGizmoDrag(const ImVec2& mouse);
+  void endSceneGizmoDrag();
+  void commitSceneTransform(entt::entity entity);
+
   // Multiplayer chat overlay (T to open, Enter send, Esc close).
   bool chatOpen = false;
   bool chatJustOpened = false;

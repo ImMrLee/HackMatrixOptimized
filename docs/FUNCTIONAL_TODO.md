@@ -85,6 +85,12 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-28：**Scene Editor 平移 gizmo**：
+  - 选中 Model 后显示红/绿/蓝 X/Y/Z 三轴，屏幕空间命中测试，悬停高亮并切换光标；
+  - 拖动轴按屏幕投影方向修改 `Positionable.pos`，逐帧 `damage()`；几乎正对相机的轴（屏幕长度 < 8px）不参与命中；
+  - 松手提交：已连接且不是世界 authority 时调用 `Client::sendWorldEntityEdit`；authority 由现有 ~20Hz 实体同步广播；数据库保存仍由工具栏 Save 或退出统一 `saveAll()` 完成；
+  - `HACKMATRIX_IMGUI_SCENE_SELECT_ID=N` 可选中指定数据库实体，便于无头截图/回归；单测 97/97 通过。
+
 - 2026-11-28：**Entity Editor 重做为 Scene Editor（Phase 1）**：
   - 侧边栏入口从 Entity Editor 改为 Scene Editor，编辑器本身以独立面板打开：顶部工具栏 + 左侧 Outliner + 右侧 Inspector，中间保留现有 3D 视野；
   - Outliner 支持搜索、选中、`Parent.childrenIds` 父子层级显示（带循环/缺失子实体保护），并显示实体类型和稳定 ID；

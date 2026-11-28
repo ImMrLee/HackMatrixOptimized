@@ -118,6 +118,12 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
           }
         }
       }
+      if (const char* selectedId =
+            std::getenv("HACKMATRIX_IMGUI_SCENE_SELECT_ID")) {
+        if (auto entity = registry->locateEntity(std::atoi(selectedId))) {
+          sceneSelection = entity.value();
+        }
+      }
     }
   }
   // ImGui::ShowDemoWindow();
@@ -520,6 +526,51 @@ sceneLower(std::string value)
   return value;
 }
 
+bool
+sceneProjectToScreen(const glm::mat4& projection,
+                     const glm::mat4& view,
+                     const glm::vec3& world,
+                     ImVec2& screen)
+{
+  const glm::vec4 clip = projection * view * glm::vec4(world, 1.0f);
+  if (clip.w <= 1e-5f) {
+    return false;
+  }
+  const float ndcX = clip.x / clip.w;
+  const float ndcY = clip.y / clip.w;
+  // createMouseRay() flips pointer NDC when the wlroots projection does.
+  const float pointerNdcY = projection[1][1] < 0.0f ? -ndcY : ndcY;
+  screen.x = (ndcX * 0.5f + 0.5f) * SCREEN_WIDTH;
+  screen.y = (1.0f - (pointerNdcY * 0.5f + 0.5f)) * SCREEN_HEIGHT;
+  return true;
+}
+
+float
+sceneDistanceToSegment(const ImVec2& point,
+                       const ImVec2& start,
+                       const ImVec2& end)
+{
+  const float dx = end.x - start.x;
+  const float dy = end.y - start.y;
+  const float lengthSq = dx * dx + dy * dy;
+  if (lengthSq < 1e-6f) {
+    return std::hypot(point.x - start.x, point.y - start.y);
+  }
+  float t = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq;
+  t = std::clamp(t, 0.0f, 1.0f);
+  const float nearestX = start.x + t * dx;
+  const float nearestY = start.y + t * dy;
+  return std::hypot(point.x - nearestX, point.y - nearestY);
+}
+
+const glm::vec3 kGizmoAxes[3] = { glm::vec3(1.0f, 0.0f, 0.0f),
+                                  glm::vec3(0.0f, 1.0f, 0.0f),
+                                  glm::vec3(0.0f, 0.0f, 1.0f) };
+const ImU32 kGizmoColors[3] = { IM_COL32(235, 90, 90, 255),
+                                IM_COL32(100, 215, 100, 255),
+                                IM_COL32(100, 150, 255, 255) };
+const char* const kGizmoNames[3] = { "X", "Y", "Z" };
+
 std::string
 sceneEntityLabel(const std::shared_ptr<EntityRegistry>& registry,
                  entt::entity entity)
@@ -642,10 +693,18 @@ EngineGui::setSceneEditorOpen(bool open)
     menuVisible = false;
     sceneAddComponentOpen = false;
     sceneAddComponentEntity = entt::null;
+    sceneGizmoHoverAxis = -1;
+    sceneGizmoDragAxis = -1;
+    sceneGizmoEntity = entt::null;
     if (controls) {
       controls->beginPointerMode();
     }
   } else {
+    if (sceneGizmoDragAxis >= 0) {
+      // Closing mid-drag should still commit the last previewed transform.
+      endSceneGizmoDrag();
+    }
+    sceneGizmoHoverAxis = -1;
     sceneAddComponentOpen = false;
     sceneAddComponentEntity = entt::null;
     if (controls) {
@@ -785,6 +844,8 @@ EngineGui::renderSceneToolbar(const ImVec2& pos, const ImVec2& size)
     const auto& persistable = registry->get<Persistable>(sceneSelection);
     ImGui::SameLine();
     ImGui::TextDisabled("| selected #%lld", (long long)persistable.entityId);
+    ImGui::SameLine();
+    ImGui::TextDisabled("| drag X/Y/Z to move");
   }
   ImGui::End();
   ImGui::PopStyleVar();
@@ -1029,6 +1090,199 @@ EngineGui::pickSceneEntity(float mouseX, float mouseY)
 }
 
 void
+EngineGui::renderSceneGizmo(const ImVec2& clipMin, const ImVec2& clipMax)
+{
+  if (sceneSelection == entt::null || !registry->valid(sceneSelection)) {
+    return;
+  }
+  auto* positionable = registry->try_get<Positionable>(sceneSelection);
+  auto* camera = engine ? engine->getCamera() : nullptr;
+  if (!positionable || !camera) {
+    return;
+  }
+
+  const glm::mat4& projection = camera->getProjectionMatrix();
+  const glm::mat4& view = camera->getViewMatrix();
+  ImVec2 origin;
+  if (!sceneProjectToScreen(projection, view, positionable->pos, origin)) {
+    return;
+  }
+
+  const float distance =
+    std::max(0.05f, glm::length(positionable->pos - camera->position));
+  const float p11 = std::abs(projection[1][1]);
+  const float worldPerPixel =
+    p11 > 1e-6f ? (2.0f * distance) / (p11 * SCREEN_HEIGHT) : 0.0f;
+  if (worldPerPixel <= 0.0f) {
+    return;
+  }
+  const float axisLength = worldPerPixel * 90.0f;
+
+  ImDrawList* draw = ImGui::GetForegroundDrawList();
+  draw->PushClipRect(clipMin, clipMax, true);
+  for (int axis = 0; axis < 3; ++axis) {
+    ImVec2 end;
+    if (!sceneProjectToScreen(
+          projection,
+          view,
+          positionable->pos + kGizmoAxes[axis] * axisLength,
+          end)) {
+      continue;
+    }
+    const bool active = sceneGizmoDragAxis == axis ||
+                        (sceneGizmoDragAxis < 0 && sceneGizmoHoverAxis == axis);
+    draw->AddLine(origin, end, kGizmoColors[axis], active ? 4.0f : 2.0f);
+    draw->AddCircleFilled(end, active ? 6.0f : 4.0f, kGizmoColors[axis]);
+    draw->AddText(ImVec2(end.x + 5.0f, end.y - 7.0f),
+                  kGizmoColors[axis],
+                  kGizmoNames[axis]);
+  }
+  draw->AddCircleFilled(origin, 4.0f, IM_COL32(245, 245, 245, 245));
+  draw->PopClipRect();
+}
+
+bool
+EngineGui::handleSceneGizmoInput(const ImVec2& mouse, bool mouseInView)
+{
+  if (sceneGizmoDragAxis >= 0) {
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      endSceneGizmoDrag();
+      return true;
+    }
+    updateSceneGizmoDrag(mouse);
+    return true;
+  }
+
+  sceneGizmoHoverAxis = -1;
+  if (!mouseInView || sceneSelection == entt::null ||
+      !registry->valid(sceneSelection)) {
+    return false;
+  }
+  auto* positionable = registry->try_get<Positionable>(sceneSelection);
+  auto* camera = engine ? engine->getCamera() : nullptr;
+  if (!positionable || !camera) {
+    return false;
+  }
+
+  const glm::mat4& projection = camera->getProjectionMatrix();
+  const glm::mat4& view = camera->getViewMatrix();
+  ImVec2 origin;
+  if (!sceneProjectToScreen(projection, view, positionable->pos, origin)) {
+    return false;
+  }
+
+  const float distance =
+    std::max(0.05f, glm::length(positionable->pos - camera->position));
+  const float p11 = std::abs(projection[1][1]);
+  const float worldPerPixel =
+    p11 > 1e-6f ? (2.0f * distance) / (p11 * SCREEN_HEIGHT) : 0.0f;
+  if (worldPerPixel <= 0.0f) {
+    return false;
+  }
+  const float axisLength = worldPerPixel * 90.0f;
+
+  int bestAxis = -1;
+  float bestDistance = 9.0f;
+  glm::vec2 bestScreenDirection(0.0f);
+  for (int axis = 0; axis < 3; ++axis) {
+    ImVec2 end;
+    if (!sceneProjectToScreen(
+          projection,
+          view,
+          positionable->pos + kGizmoAxes[axis] * axisLength,
+          end)) {
+      continue;
+    }
+    const float dx = end.x - origin.x;
+    const float dy = end.y - origin.y;
+    const float screenLength = std::hypot(dx, dy);
+    // A nearly camera-facing axis has almost no screen length and cannot be
+    // dragged reliably; leave it out of hit testing.
+    if (screenLength < 8.0f) {
+      continue;
+    }
+    const float hitDistance = sceneDistanceToSegment(mouse, origin, end);
+    if (hitDistance < bestDistance) {
+      bestDistance = hitDistance;
+      bestAxis = axis;
+      bestScreenDirection = glm::vec2(dx / screenLength, dy / screenLength);
+    }
+  }
+
+  if (bestAxis < 0) {
+    return false;
+  }
+
+  sceneGizmoHoverAxis = bestAxis;
+  ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+  if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    return false;
+  }
+
+  sceneGizmoDragAxis = bestAxis;
+  sceneGizmoEntity = sceneSelection;
+  sceneGizmoStartMouse = mouse;
+  sceneGizmoStartPos = positionable->pos;
+  sceneGizmoAxisScreen = bestScreenDirection;
+  sceneGizmoWorldPerPixel = worldPerPixel;
+  return true;
+}
+
+void
+EngineGui::updateSceneGizmoDrag(const ImVec2& mouse)
+{
+  if (sceneGizmoDragAxis < 0 || sceneGizmoEntity == entt::null ||
+      !registry->valid(sceneGizmoEntity)) {
+    sceneGizmoDragAxis = -1;
+    sceneGizmoEntity = entt::null;
+    return;
+  }
+  auto* positionable = registry->try_get<Positionable>(sceneGizmoEntity);
+  if (!positionable) {
+    sceneGizmoDragAxis = -1;
+    sceneGizmoEntity = entt::null;
+    return;
+  }
+
+  const float dx = mouse.x - sceneGizmoStartMouse.x;
+  const float dy = mouse.y - sceneGizmoStartMouse.y;
+  const float pixelsAlongAxis =
+    dx * sceneGizmoAxisScreen.x + dy * sceneGizmoAxisScreen.y;
+  const float worldDelta = pixelsAlongAxis * sceneGizmoWorldPerPixel;
+  positionable->pos =
+    sceneGizmoStartPos + kGizmoAxes[sceneGizmoDragAxis] * worldDelta;
+  positionable->damage();
+}
+
+void
+EngineGui::endSceneGizmoDrag()
+{
+  const entt::entity edited = sceneGizmoEntity;
+  sceneGizmoDragAxis = -1;
+  sceneGizmoEntity = entt::null;
+  sceneGizmoHoverAxis = -1;
+  if (edited != entt::null && registry->valid(edited)) {
+    commitSceneTransform(edited);
+  }
+}
+
+void
+EngineGui::commitSceneTransform(entt::entity entity)
+{
+  auto* positionable = registry->try_get<Positionable>(entity);
+  auto client = engine ? engine->getClient() : nullptr;
+  if (!positionable || !client || !client->isConnected() ||
+      client->worldAuthorityID() == 0 || client->isWorldAuthority()) {
+    return;
+  }
+  client->sendWorldEntityEdit(static_cast<std::uint32_t>(entt::to_integral(entity)),
+                              positionable->pos,
+                              positionable->origin,
+                              positionable->rotate,
+                              positionable->scale);
+}
+
+void
 EngineGui::drawSceneSelectionOverlay(const ImVec2& clipMin,
                                      const ImVec2& clipMax)
 {
@@ -1149,18 +1403,27 @@ EngineGui::renderSceneEditor()
   const float viewLeft = origin.x + 30.0f + leftWidth + gap;
   const float viewRight = origin.x + work.x - rightWidth - gap;
   const float viewBottom = sideTop + sideHeight;
-  if (!ImGui::IsPopupOpen("",
-                          ImGuiPopupFlags_AnyPopupId |
-                            ImGuiPopupFlags_AnyPopupLevel) &&
-      ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouse.x > viewLeft &&
-      mouse.x < viewRight && mouse.y > sideTop && mouse.y < viewBottom) {
+  const bool mouseInView = mouse.x > viewLeft && mouse.x < viewRight &&
+                           mouse.y > sideTop && mouse.y < viewBottom;
+
+  const bool popupOpen =
+    ImGui::IsPopupOpen("",
+                       ImGuiPopupFlags_AnyPopupId |
+                         ImGuiPopupFlags_AnyPopupLevel);
+  const bool gizmoCaptured =
+    !popupOpen && handleSceneGizmoInput(mouse, mouseInView);
+  if (!gizmoCaptured && !popupOpen &&
+      ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouseInView) {
     sceneSelection = pickSceneEntity(mouse.x, mouse.y);
+    sceneGizmoHoverAxis = -1;
     sceneAddComponentOpen = false;
     sceneAddComponentEntity = entt::null;
   }
 
   drawSceneSelectionOverlay(ImVec2(viewLeft, sideTop),
                             ImVec2(viewRight, viewBottom));
+  renderSceneGizmo(ImVec2(viewLeft, sideTop),
+                   ImVec2(viewRight, viewBottom));
 }
 
 void
