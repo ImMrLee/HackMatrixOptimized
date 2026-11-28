@@ -15,7 +15,7 @@
 | # | 问题 | 来源 |
 |---|---|---|
 | F3 | WM 模式下滚轮被失焦窗口处理，导致未定义状态 | `readme.md` `# Bugs` | ✅ **已修复**：`handle_pointer_axis` 只把滚动发给真正有指针焦点的表面，移除了「无焦点时随机挑一个窗口」的 fallback。hover 焦点仍会在移动时设置焦点，悬停滚动不受影响 |
-| F4 | 手动 focus（按 `r`）偶发失效 | `todo.md` / 历史记录 |
+| F4 | 手动 focus（按 `r`）偶发失效 | `todo.md` / 历史记录；**部分改善**：准星射线、焦点清理、远端聚焦已修，仍可能偶发；README 已不再声称完全修复 |
 | F5 | 透明物体与 app 渲染叠加错误 | 历史记录 |
 | F6 | 光照 acne、光照距离圆形条纹 | 历史记录 |
 | F7 | 最多同时显示 10 个 app | 历史记录 |
@@ -84,6 +84,12 @@ Multiplayer
 > 依赖：F14a 是「出现在场景对应位置」的前提。双方仍加载同一份 `db/matrix.db`；F14a v2 已把 **API 体素**与 **DB 持久化实体的 Positionable 变换**做成权威同步，运行时创建/删除实体与 Model/Light 组件变更仍留待后续。
 
 ## 完成记录
+
+- 2026-11-28：**退出清理 / 仓库止血 / 文档口径**：
+  - 退出时先向所有 Wayland 窗口发送 close，再终止 `launchNestedProgram` 启动的 launcher/终端（对 `setsid()` 进程组先 SIGTERM 后 SIGKILL）以及所有 Bootable 子进程（不再只限 `killOnExit=true`），并清空持久化的 pid；实测 `Super+Enter` 启动 `weston-terminal` 后发送 QUIT，进程被清理；
+  - README 不再声称 `r` 键 bug 已完全修复；F4 标注为“部分改善，仍可能偶发”；
+  - 停止跟踪 `build-debug/` 与 `dist/`（未重写历史），`.gitignore` 增加 `build-*/`、`cmake-build-*/`、`*.pkg.tar.zst`；
+  - 单测 97/97 通过。
 
 - 2026-11-28：**启动健壮性 + 退出确认框光标**：
   - API 端口（默认 `tcp://*:4455`，仓库 `./launch` 为 `3345`）被占用时不再 abort：捕获 ZMQ `bind` 失败，打印明确提示并禁用外部控制 API，合成器继续运行；

@@ -26,6 +26,8 @@
 #include <spdlog/common.h>
 #include <sstream>
 #include <thread>
+#include <vector>
+#include <signal.h>
 #include <unistd.h>
 #include <cstdlib>
 #include <sys/wait.h>
@@ -137,6 +139,49 @@ configureWaylandChildEnvironment(const std::string& waylandDisplay,
   setenv("ELECTRON_OZONE_PLATFORM_HINT", "wayland", 1);
 }
 
+namespace {
+std::mutex launchedMutex;
+std::vector<pid_t> launchedPids;
+
+void
+registerLaunchedPid(pid_t pid)
+{
+  std::lock_guard<std::mutex> lock(launchedMutex);
+  launchedPids.push_back(pid);
+}
+
+void
+killLaunchedProcesses()
+{
+  std::vector<pid_t> pids;
+  {
+    std::lock_guard<std::mutex> lock(launchedMutex);
+    pids.swap(launchedPids);
+  }
+  for (pid_t pid : pids) {
+    if (pid <= 1) {
+      continue;
+    }
+    // launchNestedProgram() calls setsid(), so the child leads a process group;
+    // signal the group to take launchers and their children down too.
+    if (kill(-pid, SIGTERM) != 0) {
+      kill(pid, SIGTERM);
+    }
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  for (pid_t pid : pids) {
+    if (pid <= 1) {
+      continue;
+    }
+    if (kill(pid, 0) == 0 || kill(-pid, 0) == 0) {
+      if (kill(-pid, SIGKILL) != 0) {
+        kill(pid, SIGKILL);
+      }
+    }
+  }
+}
+} // namespace
+
 static void
 launchNestedProgram(const std::string& program, const char* logLabel)
 {
@@ -173,6 +218,7 @@ launchNestedProgram(const std::string& program, const char* logLabel)
     }
     int status = 0;
     if (pid > 0) {
+      registerLaunchedPid(pid);
       waitpid(pid, &status, 0);
     }
   }).detach();
@@ -675,6 +721,10 @@ WindowManager::~WindowManager() {
   if(substructureThread.joinable()) {
     substructureThread.join();
   }
+  // Kill launchers/terminals started through launchNestedProgram(), then the
+  // Bootable children. Both paths are needed: wofi/terminal apps are not
+  // Bootable entities, while bootOnStartup apps are.
+  killLaunchedProcesses();
   systems::killBootablesOnExit(registry);
 }
 

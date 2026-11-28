@@ -1,5 +1,6 @@
 #include "systems/Boot.h"
 #include "components/Bootable.h"
+#include "wayland_app.h"
 #include <optional>
 #include <signal.h>
 
@@ -137,13 +138,65 @@ systems::bootAll(std::shared_ptr<EntityRegistry> registry, char** envp)
 void
 systems::killBootablesOnExit(std::shared_ptr<EntityRegistry> registry)
 {
-  auto bootables = registry->view<Bootable>();
-  for (auto [entity, bootable] : bootables.each()) {
-    if (bootable.killOnExit && bootable.pid.has_value()) {
-      kill(bootable.pid.value(), SIGTERM);
-      bootable.pid = std::nullopt;
+  if (!registry) {
+    return;
+  }
+
+  // Ask every mapped window to close first so clients can save their state and
+  // exit cleanly (this also covers apps we did not launch ourselves, e.g. wofi
+  // or a terminal started by the user).
+  auto apps = registry->view<WaylandApp::Component>();
+  for (auto [entity, component] : apps.each()) {
+    if (component.app) {
+      component.app->close();
     }
   }
+
+  // Give clients a brief moment to handle the close request.
+  std::this_thread::sleep_for(std::chrono::milliseconds(120));
+
+  // Terminate every child we launched, regardless of the per-entity
+  // killOnExit flag. Exiting the compositor with windows still open used to
+  // leave those apps running with no window to return to.
+  auto bootables = registry->view<Bootable>();
+  for (auto [entity, bootable] : bootables.each()) {
+    if (!bootable.pid.has_value()) {
+      continue;
+    }
+    const pid_t pid = bootable.pid.value();
+    if (pid <= 1) {
+      bootable.pid = std::nullopt;
+      continue;
+    }
+    if (!pidIsRunning(pid)) {
+      bootable.pid = std::nullopt;
+      continue;
+    }
+    // forkApp() calls setsid(), so the child is a process-group leader; signal
+    // the whole group to take shells/terminals and their children down too.
+    if (kill(-pid, SIGTERM) != 0) {
+      kill(pid, SIGTERM);
+    }
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+  for (auto [entity, bootable] : bootables.each()) {
+    if (!bootable.pid.has_value()) {
+      continue;
+    }
+    const pid_t pid = bootable.pid.value();
+    if (pid > 1 && pidIsRunning(pid)) {
+      if (kill(-pid, SIGKILL) != 0) {
+        kill(pid, SIGKILL);
+      }
+    }
+    bootable.pid = std::nullopt;
+  }
+
+  // Engine's earlier saveAll() ran before we cleared the pids; persist the
+  // cleanup so the next start does not try to reuse stale pids.
+  registry->saveAll();
 }
 
 std::vector<std::pair<entt::entity, int>>
