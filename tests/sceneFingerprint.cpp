@@ -199,6 +199,24 @@ TEST_F(SceneFingerprintTest, ModelContentsChangeChangesFingerprint)
   EXPECT_NE(before, after);
 }
 
+TEST_F(SceneFingerprintTest, ModelNodeChangeChangesFingerprint)
+{
+  SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+  db.exec("CREATE TABLE Model (entity_id INTEGER PRIMARY KEY, path TEXT, "
+          "node TEXT)");
+
+  const auto model = dir / "model.obj";
+  writeFile(model, "v 0 0 0\n");
+  db.exec("INSERT INTO Model (entity_id, path, node) VALUES (1, '" +
+          model.string() + "', 'part-a')");
+
+  const auto before = computeSceneFingerprint(db, databaseFile.string());
+  db.exec("UPDATE Model SET node = 'part-b' WHERE entity_id = 1");
+  const auto after = computeSceneFingerprint(db, databaseFile.string());
+
+  EXPECT_NE(before, after);
+}
+
 TEST_F(SceneFingerprintTest, MaterialTextureChangeChangesFingerprint)
 {
   SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);

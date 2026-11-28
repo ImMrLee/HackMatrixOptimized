@@ -85,6 +85,19 @@ Multiplayer
 
 ## 完成记录
 
+- 2026-11-28：**Scene Editor 完整编辑能力**：
+  - 变换 gizmo 扩展为 Move / Rotate / Scale（`W/E/R`）：平移沿三轴，旋转显示三个世界轴圆环，缩放使用轴端方块；拖动期间只改本地 `Positionable` 并 `damage()`，松手提交网络编辑；
+  - Outliner 支持 `Ctrl` 多选、拖拽 reparent（防止自引用/环）、右键 Unparent；Delete 级联删除子实体并清理 Parent 引用；
+  - 多选拖动平移会同时移动选中实体及其后代；旋转/缩放对选中实体逐个应用；
+  - 增加 Undo / Redo（工具栏 + `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y`），覆盖 gizmo 变换和 reparent；
+  - 左下 Asset Browser 扫描 `vox/`、`assets/`、`models/`（以及 `HACKMATRIX_ASSET_DIR`），支持搜索、双击/Add 导入；
+  - 模型缓存：按规范化路径 + Assimp node 共享 `ModelData`，同一文件只加载一份 GPU 数据；`Model` 表新增 `node` 列并自动迁移；
+  - 导入器补强：烘焙节点变换、缺失法线生成、内嵌贴图（GLB/FBX）、base-color 回退、贴图路径规范化与缺失贴图占位；
+  - `Import as parts` 按 Assimp 节点创建多个实体，使用节点的世界变换写入 `Positionable`，支持 Blender 导出的多物体场景；
+  - Scene Editor 打开时默认暂停旋转/翻译模拟，可点 `Resume` 预览运行效果；关闭编辑器自动恢复；
+  - 多人连接时锁定结构编辑（New / Duplicate / Delete / reparent / Asset 导入），只允许会通过 `EntityTransform` 同步的 Transform 编辑，避免本地 DB 与权威世界分叉；
+  - 场景指纹升级 v6，将 `Model.node` 纳入静态场景哈希；单测 98/98 通过。
+
 - 2026-11-28：**Scene Editor 平移 gizmo**：
   - 选中 Model 后显示红/绿/蓝 X/Y/Z 三轴，屏幕空间命中测试，悬停高亮并切换光标；
   - 拖动轴按屏幕投影方向修改 `Positionable.pos`，逐帧 `damage()`；几乎正对相机的轴（屏幕长度 < 8px）不参与命中；

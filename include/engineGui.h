@@ -4,6 +4,10 @@
 #include "MultiPlayer/Server.h"
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_opengl3.h"
+#include <functional>
+#include <optional>
+#include <string>
+#include <unordered_map>
 #include <vector>
 #include "model.h"
 
@@ -45,14 +49,43 @@ class EngineGui
   // provides selection, creation, duplication, deletion and component editing.
   bool sceneEditorOpen = false;
   entt::entity sceneSelection = entt::null;
+  std::vector<entt::entity> sceneSelectionSet;
   entt::entity sceneAddComponentEntity = entt::null;
   bool sceneAddComponentOpen = false;
   char sceneFilter[256] = {};
   void setSceneEditorOpen(bool open);
+  bool isSceneEntitySelected(entt::entity entity) const;
+  void selectSceneEntity(entt::entity entity, bool additive);
+  void pruneSceneSelection();
+  void deleteSelectedSceneEntities();
+  void duplicateSelectedSceneEntities();
+  bool sceneStructureLocked() const;
+  bool reparentSceneEntity(entt::entity child, entt::entity newParent);
+  void applySceneReparent(entt::entity child, entt::entity newParent);
+  struct SceneCommand
+  {
+    std::string label;
+    std::function<void()> undo;
+    std::function<void()> redo;
+  };
+  std::vector<SceneCommand> sceneUndoStack;
+  std::vector<SceneCommand> sceneRedoStack;
+  void pushSceneCommand(SceneCommand command);
+  void undoSceneEdit();
+  void redoSceneEdit();
   void renderSceneEditor();
   void renderSceneToolbar(const ImVec2& pos, const ImVec2& size);
   void renderSceneOutliner(const ImVec2& pos, const ImVec2& size);
   void renderSceneInspector(const ImVec2& pos, const ImVec2& size);
+  void renderSceneAssetBrowser(const ImVec2& pos, const ImVec2& size);
+  void refreshSceneAssets();
+  void importSceneAsset(const std::string& path);
+  void importSceneAssetAsParts(const std::string& path);
+  std::vector<std::string> sceneAssets;
+  double sceneAssetsScannedAt = -1.0;
+  char sceneAssetFilter[256] = {};
+  bool sceneImportAsParts = false;
+  bool sceneSimulationPaused = true;
   entt::entity pickSceneEntity(float mouseX, float mouseY);
   void drawSceneSelectionOverlay(const ImVec2& clipMin, const ImVec2& clipMax);
   entt::entity duplicateEntity(entt::entity source);
@@ -60,13 +93,26 @@ class EngineGui
   // Translate gizmo: three screen-space axis handles at the selected
   // Positionable. Edits are applied locally while dragging and committed to
   // the network on release.
+  enum class SceneGizmoMode
+  {
+    Translate,
+    Rotate,
+    Scale,
+  };
+  SceneGizmoMode sceneGizmoMode = SceneGizmoMode::Translate;
   int sceneGizmoHoverAxis = -1;
   int sceneGizmoDragAxis = -1;
   entt::entity sceneGizmoEntity = entt::null;
   ImVec2 sceneGizmoStartMouse{ 0.0f, 0.0f };
-  glm::vec3 sceneGizmoStartPos{ 0.0f };
+  ImVec2 sceneGizmoStartOrigin{ 0.0f, 0.0f };
+  float sceneGizmoStartAngle = 0.0f;
+  float sceneGizmoStartRadiusPixels = 1.0f;
   glm::vec2 sceneGizmoAxisScreen{ 0.0f };
   float sceneGizmoWorldPerPixel = 0.0f;
+  std::vector<entt::entity> sceneGizmoTargets;
+  std::unordered_map<entt::entity, glm::vec3> sceneGizmoStartPositions;
+  std::unordered_map<entt::entity, glm::vec3> sceneGizmoStartRotations;
+  std::unordered_map<entt::entity, float> sceneGizmoStartScales;
   void renderSceneGizmo(const ImVec2& clipMin, const ImVec2& clipMax);
   bool handleSceneGizmoInput(const ImVec2& mouse, bool mouseInView);
   void updateSceneGizmoDrag(const ImVec2& mouse);

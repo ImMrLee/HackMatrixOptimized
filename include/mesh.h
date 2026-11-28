@@ -31,7 +31,7 @@ public:
   Mesh(vector<Vertex> vertices,
        vector<unsigned int> indices,
        vector<MeshTexture> textures);
-  void Draw(Shader& shader);
+  void Draw(Shader& shader) const;
 
 private:
   //  render data

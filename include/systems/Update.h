@@ -5,6 +5,8 @@
 class Renderer;
 namespace systems {
 void
-updateAll(std::shared_ptr<EntityRegistry>, Renderer* renderer);
+updateAll(std::shared_ptr<EntityRegistry>,
+          Renderer* renderer,
+          bool applyMovement = true);
 void update(std::shared_ptr<EntityRegistry>, entt::entity);
 }

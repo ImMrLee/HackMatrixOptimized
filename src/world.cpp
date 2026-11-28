@@ -1229,9 +1229,11 @@ void
 World::tick()
 {
   ZoneScoped;
-  systems::applyRotation(registry);
-  systems::applyTranslations(registry);
-  systems::updateAll(registry, renderer);
+  if (!simulationPaused_) {
+    systems::applyRotation(registry);
+    systems::applyTranslations(registry);
+  }
+  systems::updateAll(registry, renderer, !simulationPaused_);
   dynamicObjects->flushQueuedRemovals();
   if (dynamicObjects->damaged()) {
     renderer->updateDynamicObjects(dynamicObjects);

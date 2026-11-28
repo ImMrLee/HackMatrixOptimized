@@ -7,7 +7,9 @@
 #include "systems/Light.h"
 
 void
-systems::updateAll(std::shared_ptr<EntityRegistry> registry, Renderer* renderer)
+systems::updateAll(std::shared_ptr<EntityRegistry> registry,
+                   Renderer* renderer,
+                   bool applyMovement)
 {
   bool updatedSomething = false;
   auto view = registry->view<Positionable>();
@@ -21,8 +23,10 @@ systems::updateAll(std::shared_ptr<EntityRegistry> registry, Renderer* renderer)
     systems::updateLighting(registry, renderer);
   }
 
-  systems::applyRotation(registry);
-  systems::applyTranslations(registry);
+  if (applyMovement) {
+    systems::applyRotation(registry);
+    systems::applyTranslations(registry);
+  }
 }
 
 void

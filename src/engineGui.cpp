@@ -1,4 +1,7 @@
 #include "engine.h"
+#include <assimp/Importer.hpp>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
 #include "engineGui.h"
 #include "components/Bootable.h"
 #include "components/BoundingSphere.h"
@@ -23,8 +26,10 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <cstdlib>
+#include <cstring>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -42,6 +47,9 @@
 #include "time_utils.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
+#include <spdlog/spdlog.h>
 
 EngineGui::EngineGui(Engine* engine,
                      shared_ptr<EntityRegistry> registry,
@@ -122,6 +130,29 @@ EngineGui::render(double& fps, int frameIndex, vector<double>& frameTimes)
             std::getenv("HACKMATRIX_IMGUI_SCENE_SELECT_ID")) {
         if (auto entity = registry->locateEntity(std::atoi(selectedId))) {
           sceneSelection = entity.value();
+        }
+      }
+      if (const char* selectedIds =
+            std::getenv("HACKMATRIX_IMGUI_SCENE_SELECT_IDS")) {
+        sceneSelectionSet.clear();
+        sceneSelection = entt::null;
+        std::stringstream ids(selectedIds);
+        std::string token;
+        while (std::getline(ids, token, ',')) {
+          if (auto entity = registry->locateEntity(std::atoi(token.c_str()))) {
+            selectSceneEntity(entity.value(), true);
+          }
+        }
+      }
+      if (const char* gizmoMode =
+            std::getenv("HACKMATRIX_IMGUI_SCENE_GIZMO")) {
+        const std::string mode(gizmoMode);
+        if (mode == "rotate") {
+          sceneGizmoMode = SceneGizmoMode::Rotate;
+        } else if (mode == "scale") {
+          sceneGizmoMode = SceneGizmoMode::Scale;
+        } else {
+          sceneGizmoMode = SceneGizmoMode::Translate;
         }
       }
     }
@@ -570,6 +601,13 @@ const ImU32 kGizmoColors[3] = { IM_COL32(235, 90, 90, 255),
                                 IM_COL32(100, 215, 100, 255),
                                 IM_COL32(100, 150, 255, 255) };
 const char* const kGizmoNames[3] = { "X", "Y", "Z" };
+const glm::vec3 kGizmoCircleA[3] = { glm::vec3(0.0f, 1.0f, 0.0f),
+                                    glm::vec3(0.0f, 0.0f, 1.0f),
+                                    glm::vec3(1.0f, 0.0f, 0.0f) };
+const glm::vec3 kGizmoCircleB[3] = { glm::vec3(0.0f, 0.0f, 1.0f),
+                                    glm::vec3(1.0f, 0.0f, 0.0f),
+                                    glm::vec3(0.0f, 1.0f, 0.0f) };
+constexpr float kGizmoPi = 3.14159265358979323846f;
 
 std::string
 sceneEntityLabel(const std::shared_ptr<EntityRegistry>& registry,
@@ -676,6 +714,105 @@ sceneEntityMatches(const std::shared_ptr<EntityRegistry>& registry,
          std::string::npos;
 }
 
+entt::entity
+sceneParentEntity(const std::shared_ptr<EntityRegistry>& registry,
+                  entt::entity child)
+{
+  if (child == entt::null || !registry->valid(child)) {
+    return entt::null;
+  }
+  auto* persistable = registry->try_get<Persistable>(child);
+  if (!persistable) {
+    return entt::null;
+  }
+  for (auto [entity, parent] : registry->view<Parent>().each()) {
+    if (std::find(parent.childrenIds.begin(),
+                  parent.childrenIds.end(),
+                  static_cast<int>(persistable->entityId)) !=
+        parent.childrenIds.end()) {
+      return entity;
+    }
+  }
+  return entt::null;
+}
+
+void
+sceneRemoveChildFromAllParents(const std::shared_ptr<EntityRegistry>& registry,
+                               int64_t childId)
+{
+  for (auto [entity, parent] : registry->view<Parent>().each()) {
+    parent.childrenIds.erase(
+      std::remove(parent.childrenIds.begin(),
+                  parent.childrenIds.end(),
+                  static_cast<int>(childId)),
+      parent.childrenIds.end());
+  }
+}
+
+void
+sceneCollectDescendantIds(const std::shared_ptr<EntityRegistry>& registry,
+                          entt::entity entity,
+                          std::unordered_set<int64_t>& ids)
+{
+  auto* parent = registry->try_get<Parent>(entity);
+  if (!parent) {
+    return;
+  }
+  for (const int childId : parent->childrenIds) {
+    if (!ids.insert(static_cast<int64_t>(childId)).second) {
+      continue;
+    }
+    if (auto child = registry->locateEntity(childId)) {
+      sceneCollectDescendantIds(registry, child.value(), ids);
+    }
+  }
+}
+
+bool
+sceneIsDescendantOf(const std::shared_ptr<EntityRegistry>& registry,
+                    entt::entity candidate,
+                    entt::entity ancestor)
+{
+  if (candidate == entt::null || ancestor == entt::null) {
+    return false;
+  }
+  auto* ancestorPersistable = registry->try_get<Persistable>(ancestor);
+  auto* candidatePersistable = registry->try_get<Persistable>(candidate);
+  if (!ancestorPersistable || !candidatePersistable) {
+    return false;
+  }
+  std::unordered_set<int64_t> descendants;
+  sceneCollectDescendantIds(registry, ancestor, descendants);
+  return descendants.contains(candidatePersistable->entityId);
+}
+
+struct SceneTransformState
+{
+  entt::entity entity = entt::null;
+  glm::vec3 position{ 0.0f };
+  glm::vec3 rotate{ 0.0f };
+  float scale = 1.0f;
+};
+
+void
+sceneApplyTransformStates(const std::shared_ptr<EntityRegistry>& registry,
+                          const std::vector<SceneTransformState>& states)
+{
+  for (const auto& state : states) {
+    if (state.entity == entt::null || !registry->valid(state.entity)) {
+      continue;
+    }
+    auto* positionable = registry->try_get<Positionable>(state.entity);
+    if (!positionable) {
+      continue;
+    }
+    positionable->pos = state.position;
+    positionable->rotate = state.rotate;
+    positionable->scale = state.scale;
+    positionable->damage();
+  }
+}
+
 } // namespace
 
 void
@@ -687,10 +824,15 @@ EngineGui::setSceneEditorOpen(bool open)
   sceneEditorOpen = open;
 
   auto* controls = engine ? engine->getControls() : nullptr;
+  auto* world = engine ? engine->getWorld() : nullptr;
   if (open) {
     // The sidebar and the editor both want the left edge; close the narrow
     // developer menu so the outliner has room.
     menuVisible = false;
+    sceneSimulationPaused = true;
+    if (world) {
+      world->setSimulationPaused(true);
+    }
     sceneAddComponentOpen = false;
     sceneAddComponentEntity = entt::null;
     sceneGizmoHoverAxis = -1;
@@ -704,6 +846,9 @@ EngineGui::setSceneEditorOpen(bool open)
       // Closing mid-drag should still commit the last previewed transform.
       endSceneGizmoDrag();
     }
+    if (world) {
+      world->setSimulationPaused(false);
+    }
     sceneGizmoHoverAxis = -1;
     sceneAddComponentOpen = false;
     sceneAddComponentEntity = entt::null;
@@ -711,6 +856,268 @@ EngineGui::setSceneEditorOpen(bool open)
       controls->endPointerMode();
     }
   }
+}
+
+bool
+EngineGui::isSceneEntitySelected(entt::entity entity) const
+{
+  return std::find(sceneSelectionSet.begin(),
+                   sceneSelectionSet.end(),
+                   entity) != sceneSelectionSet.end();
+}
+
+bool
+EngineGui::sceneStructureLocked() const
+{
+  auto client = engine ? engine->getClient() : nullptr;
+  // Structural edits (create/delete/reparent) are not part of the world-sync
+  // protocol; only transforms are. Avoid desyncing a live session.
+  return client && client->isConnected();
+}
+
+void
+EngineGui::selectSceneEntity(entt::entity entity, bool additive)
+{
+  if (entity == entt::null || !registry->valid(entity) ||
+      !registry->any_of<Persistable>(entity)) {
+    if (!additive) {
+      sceneSelectionSet.clear();
+      sceneSelection = entt::null;
+    }
+    return;
+  }
+
+  if (!additive) {
+    sceneSelectionSet.clear();
+    sceneSelectionSet.push_back(entity);
+    sceneSelection = entity;
+  } else {
+    const auto existing =
+      std::find(sceneSelectionSet.begin(), sceneSelectionSet.end(), entity);
+    if (existing == sceneSelectionSet.end()) {
+      sceneSelectionSet.push_back(entity);
+      sceneSelection = entity;
+    } else {
+      sceneSelectionSet.erase(existing);
+      if (sceneSelection == entity) {
+        sceneSelection =
+          sceneSelectionSet.empty() ? entt::null : sceneSelectionSet.back();
+      }
+    }
+  }
+
+  sceneAddComponentOpen = false;
+  sceneAddComponentEntity = entt::null;
+  sceneGizmoHoverAxis = -1;
+}
+
+void
+EngineGui::pruneSceneSelection()
+{
+  // The screenshot/debug hooks set sceneSelection directly; keep the set and
+  // the primary selection in sync on the next frame.
+  if (sceneSelection != entt::null && registry->valid(sceneSelection) &&
+      registry->any_of<Persistable>(sceneSelection) &&
+      !isSceneEntitySelected(sceneSelection)) {
+    sceneSelectionSet.push_back(sceneSelection);
+  }
+
+  sceneSelectionSet.erase(
+    std::remove_if(sceneSelectionSet.begin(),
+                   sceneSelectionSet.end(),
+                   [&](entt::entity entity) {
+                     return entity == entt::null ||
+                            !registry->valid(entity) ||
+                            !registry->any_of<Persistable>(entity);
+                   }),
+    sceneSelectionSet.end());
+
+  if (sceneSelection == entt::null ||
+      !isSceneEntitySelected(sceneSelection)) {
+    sceneSelection =
+      sceneSelectionSet.empty() ? entt::null : sceneSelectionSet.back();
+  }
+}
+
+void
+EngineGui::deleteSelectedSceneEntities()
+{
+  pruneSceneSelection();
+
+  std::unordered_set<int64_t> ids;
+  for (const entt::entity entity : sceneSelectionSet) {
+    if (auto* persistable = registry->try_get<Persistable>(entity)) {
+      ids.insert(persistable->entityId);
+    }
+    sceneCollectDescendantIds(registry, entity, ids);
+  }
+  if (ids.empty()) {
+    return;
+  }
+
+  for (auto [entity, parent] : registry->view<Parent>().each()) {
+    parent.childrenIds.erase(
+      std::remove_if(parent.childrenIds.begin(),
+                     parent.childrenIds.end(),
+                     [&](int childId) {
+                       return ids.contains(static_cast<int64_t>(childId));
+                     }),
+      parent.childrenIds.end());
+  }
+
+  std::vector<entt::entity> victims;
+  victims.reserve(ids.size());
+  for (const int64_t id : ids) {
+    if (auto entity = registry->locateEntity(static_cast<int>(id))) {
+      victims.push_back(entity.value());
+    }
+  }
+  for (const entt::entity entity : victims) {
+    if (registry->valid(entity) && registry->any_of<Persistable>(entity)) {
+      registry->depersist(entity);
+    }
+  }
+
+  sceneSelectionSet.clear();
+  sceneSelection = entt::null;
+  sceneGizmoDragAxis = -1;
+  sceneGizmoEntity = entt::null;
+  sceneGizmoHoverAxis = -1;
+  sceneGizmoTargets.clear();
+  sceneGizmoStartPositions.clear();
+  sceneGizmoStartRotations.clear();
+  sceneGizmoStartScales.clear();
+}
+
+void
+EngineGui::duplicateSelectedSceneEntities()
+{
+  pruneSceneSelection();
+
+  std::vector<entt::entity> sources = sceneSelectionSet;
+  if (sources.empty() && sceneSelection != entt::null) {
+    sources.push_back(sceneSelection);
+  }
+
+  std::vector<entt::entity> copies;
+  copies.reserve(sources.size());
+  for (const entt::entity source : sources) {
+    if (source != entt::null && registry->valid(source)) {
+      const entt::entity copy = duplicateEntity(source);
+      if (copy != entt::null) {
+        copies.push_back(copy);
+      }
+    }
+  }
+  if (copies.empty()) {
+    return;
+  }
+
+  sceneSelectionSet = copies;
+  sceneSelection = copies.back();
+  sceneAddComponentOpen = false;
+  sceneAddComponentEntity = entt::null;
+}
+
+bool
+EngineGui::reparentSceneEntity(entt::entity child, entt::entity newParent)
+{
+  if (child == entt::null || !registry->valid(child) ||
+      !registry->any_of<Persistable>(child) ||
+      (newParent != entt::null && child == newParent)) {
+    return false;
+  }
+  if (newParent != entt::null) {
+    if (!registry->valid(newParent) ||
+        !registry->any_of<Persistable>(newParent) ||
+        sceneIsDescendantOf(registry, newParent, child)) {
+      return false;
+    }
+  }
+
+  auto& childPersistable = registry->get<Persistable>(child);
+  sceneRemoveChildFromAllParents(registry, childPersistable.entityId);
+
+  if (newParent == entt::null) {
+    return true;
+  }
+
+  if (!registry->any_of<Parent>(newParent)) {
+    registry->emplace<Parent>(newParent);
+  }
+  auto& parent = registry->get<Parent>(newParent);
+  const int childId = static_cast<int>(childPersistable.entityId);
+  if (std::find(parent.childrenIds.begin(), parent.childrenIds.end(), childId) ==
+      parent.childrenIds.end()) {
+    parent.childrenIds.push_back(childId);
+  }
+  return true;
+}
+
+void
+EngineGui::applySceneReparent(entt::entity child, entt::entity newParent)
+{
+  if (child == entt::null || !registry->valid(child)) {
+    return;
+  }
+  const entt::entity oldParent = sceneParentEntity(registry, child);
+  if (oldParent == newParent) {
+    return;
+  }
+  if (!reparentSceneEntity(child, newParent)) {
+    return;
+  }
+  pushSceneCommand(
+    SceneCommand{ "Reparent",
+                  [this, child, oldParent]() {
+                    if (registry->valid(child)) {
+                      reparentSceneEntity(child, oldParent);
+                    }
+                  },
+                  [this, child, newParent]() {
+                    if (registry->valid(child)) {
+                      reparentSceneEntity(child, newParent);
+                    }
+                  } });
+}
+
+void
+EngineGui::pushSceneCommand(SceneCommand command)
+{
+  sceneRedoStack.clear();
+  sceneUndoStack.push_back(std::move(command));
+  constexpr std::size_t kMaxUndo = 100;
+  if (sceneUndoStack.size() > kMaxUndo) {
+    sceneUndoStack.erase(sceneUndoStack.begin());
+  }
+}
+
+void
+EngineGui::undoSceneEdit()
+{
+  if (sceneUndoStack.empty()) {
+    return;
+  }
+  SceneCommand command = std::move(sceneUndoStack.back());
+  sceneUndoStack.pop_back();
+  if (command.undo) {
+    command.undo();
+  }
+  sceneRedoStack.push_back(std::move(command));
+}
+
+void
+EngineGui::redoSceneEdit()
+{
+  if (sceneRedoStack.empty()) {
+    return;
+  }
+  SceneCommand command = std::move(sceneRedoStack.back());
+  sceneRedoStack.pop_back();
+  if (command.redo) {
+    command.redo();
+  }
+  sceneUndoStack.push_back(std::move(command));
 }
 
 entt::entity
@@ -724,7 +1131,7 @@ EngineGui::duplicateEntity(entt::entity source)
   const entt::entity duplicate = registry->createPersistent();
 
   if (auto* model = registry->try_get<Model>(source)) {
-    registry->emplace<Model>(duplicate, model->path);
+    registry->emplace<Model>(duplicate, model->path, model->node);
   }
   if (auto* positionable = registry->try_get<Positionable>(source)) {
     const float offset =
@@ -806,28 +1213,23 @@ EngineGui::renderSceneToolbar(const ImVec2& pos, const ImVec2& size)
 
   ImGui::TextUnformatted("Scene Editor");
   ImGui::SameLine();
+  const bool structureLocked = sceneStructureLocked();
+  ImGui::BeginDisabled(structureLocked);
   if (ImGui::Button("New")) {
     createNewEntity();
   }
   ImGui::SameLine();
   ImGui::BeginDisabled(!selectionValid());
   if (ImGui::Button("Duplicate")) {
-    const entt::entity duplicate = duplicateEntity(sceneSelection);
-    if (duplicate != entt::null) {
-      sceneSelection = duplicate;
-      sceneAddComponentOpen = false;
-      sceneAddComponentEntity = entt::null;
-    }
+    duplicateSelectedSceneEntities();
   }
   ImGui::SameLine();
   if (ImGui::Button("Delete")) {
     if (selectionValid()) {
-      registry->depersist(sceneSelection);
-      sceneSelection = entt::null;
-      sceneAddComponentOpen = false;
-      sceneAddComponentEntity = entt::null;
+      deleteSelectedSceneEntities();
     }
   }
+  ImGui::EndDisabled();
   ImGui::EndDisabled();
   ImGui::SameLine();
   if (ImGui::Button("Save")) {
@@ -839,13 +1241,67 @@ EngineGui::renderSceneToolbar(const ImVec2& pos, const ImVec2& size)
   }
 
   ImGui::SameLine();
+  if (ImGui::Button(sceneSimulationPaused ? "Resume" : "Pause")) {
+    sceneSimulationPaused = !sceneSimulationPaused;
+    if (auto* world = engine ? engine->getWorld() : nullptr) {
+      world->setSimulationPaused(sceneSimulationPaused);
+    }
+  }
+
+  ImGui::SameLine();
+  const auto modeButton = [&](const char* label, SceneGizmoMode mode) {
+    const bool active = sceneGizmoMode == mode;
+    if (active) {
+      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.42f, 0.68f, 1.0f));
+    }
+    if (ImGui::Button(label) && sceneGizmoDragAxis < 0) {
+      sceneGizmoMode = mode;
+    }
+    if (active) {
+      ImGui::PopStyleColor();
+    }
+  };
+  modeButton("Move", SceneGizmoMode::Translate);
+  ImGui::SameLine();
+  modeButton("Rotate", SceneGizmoMode::Rotate);
+  ImGui::SameLine();
+  modeButton("Scale", SceneGizmoMode::Scale);
+
+  ImGui::SameLine();
+  ImGui::BeginDisabled(sceneUndoStack.empty());
+  if (ImGui::Button("Undo")) {
+    undoSceneEdit();
+  }
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  ImGui::BeginDisabled(sceneRedoStack.empty());
+  if (ImGui::Button("Redo")) {
+    redoSceneEdit();
+  }
+  ImGui::EndDisabled();
+
+  ImGui::SameLine();
   ImGui::TextDisabled("%zu entities", registry->storage<Persistable>().size());
+  if (structureLocked) {
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.35f, 1.0f),
+                       "| multiplayer: structure locked");
+  }
   if (selectionValid()) {
     const auto& persistable = registry->get<Persistable>(sceneSelection);
     ImGui::SameLine();
-    ImGui::TextDisabled("| selected #%lld", (long long)persistable.entityId);
+    if (sceneSelectionSet.size() > 1) {
+      ImGui::TextDisabled("| %zu selected", sceneSelectionSet.size());
+    } else {
+      ImGui::TextDisabled("| selected #%lld", (long long)persistable.entityId);
+    }
     ImGui::SameLine();
-    ImGui::TextDisabled("| drag X/Y/Z to move");
+    const char* gizmoAction = sceneGizmoMode == SceneGizmoMode::Rotate
+                                ? "rotate"
+                                : (sceneGizmoMode == SceneGizmoMode::Scale
+                                     ? "scale"
+                                     : "move");
+    ImGui::TextDisabled("| drag X/Y/Z to %s  (W/E/R)", gizmoAction);
   }
   ImGui::End();
   ImGui::PopStyleVar();
@@ -862,6 +1318,7 @@ EngineGui::renderSceneOutliner(const ImVec2& pos, const ImVec2& size)
                  ImGuiWindowFlags_NoSavedSettings |
                  ImGuiWindowFlags_NoCollapse);
 
+  const bool structureLocked = sceneStructureLocked();
   ImGui::SetNextItemWidth(-1.0f);
   ImGui::InputTextWithHint("##scene_filter",
                            "Search entities...",
@@ -911,13 +1368,40 @@ EngineGui::renderSceneOutliner(const ImVec2& pos, const ImVec2& size)
       ImGui::Indent(14.0f);
     }
     ImGui::PushID(static_cast<int>(node.id));
-    const bool selected = node.entity == sceneSelection;
+    const bool selected = isSceneEntitySelected(node.entity);
     const std::string text = "[" + node.tag + "] " + node.label + "  #" +
                              std::to_string(node.id) + "###scene_node";
     if (ImGui::Selectable(text.c_str(), selected)) {
-      sceneSelection = node.entity;
-      sceneAddComponentOpen = false;
-      sceneAddComponentEntity = entt::null;
+      selectSceneEntity(node.entity, ImGui::GetIO().KeyCtrl);
+    }
+    if (!structureLocked && ImGui::BeginDragDropSource()) {
+      const int64_t childId = node.id;
+      ImGui::SetDragDropPayload(
+        "HM_SCENE_ENTITY", &childId, sizeof(childId));
+      ImGui::Text("[%s] %s", node.tag.c_str(), node.label.c_str());
+      ImGui::EndDragDropSource();
+    }
+    if (!structureLocked && ImGui::BeginDragDropTarget()) {
+      if (const ImGuiPayload* payload =
+            ImGui::AcceptDragDropPayload("HM_SCENE_ENTITY")) {
+        if (payload->DataSize == static_cast<int>(sizeof(int64_t))) {
+          int64_t childId = 0;
+          std::memcpy(&childId, payload->Data, sizeof(childId));
+          if (auto child = registry->locateEntity(static_cast<int>(childId))) {
+            applySceneReparent(child.value(), node.entity);
+          }
+        }
+      }
+      ImGui::EndDragDropTarget();
+    }
+    if (ImGui::BeginPopupContextItem()) {
+      if (!structureLocked && ImGui::MenuItem("Unparent")) {
+        applySceneReparent(node.entity, entt::null);
+      }
+      if (ImGui::MenuItem("Focus in Inspector")) {
+        selectSceneEntity(node.entity, false);
+      }
+      ImGui::EndPopup();
     }
     ImGui::PopID();
     if (depth > 0) {
@@ -1007,25 +1491,28 @@ EngineGui::renderSceneInspector(const ImVec2& pos, const ImVec2& size)
   ImGui::TextDisabled("Entity #%lld  (raw %d)",
                       (long long)persistable.entityId,
                       (int)entt::to_integral(sceneSelection));
+  if (sceneSelectionSet.size() > 1) {
+    ImGui::TextDisabled("%zu entities selected; editing the primary.",
+                        sceneSelectionSet.size());
+  }
   ImGui::Separator();
 
+  const bool structureLocked = sceneStructureLocked();
+  ImGui::BeginDisabled(structureLocked);
   if (ImGui::Button("Duplicate")) {
-    const entt::entity duplicate = duplicateEntity(sceneSelection);
-    if (duplicate != entt::null) {
-      sceneSelection = duplicate;
-      sceneAddComponentOpen = false;
-      sceneAddComponentEntity = entt::null;
-    }
+    duplicateSelectedSceneEntities();
   }
   ImGui::SameLine();
   if (ImGui::Button("Delete")) {
-    registry->depersist(sceneSelection);
-    sceneSelection = entt::null;
-    sceneAddComponentOpen = false;
-    sceneAddComponentEntity = entt::null;
+    deleteSelectedSceneEntities();
     ImGui::End();
     return;
   }
+  ImGui::SameLine();
+  if (ImGui::Button("Unparent")) {
+    applySceneReparent(sceneSelection, entt::null);
+  }
+  ImGui::EndDisabled();
   ImGui::Separator();
 
   renderComponentPanel(sceneSelection);
@@ -1043,6 +1530,221 @@ EngineGui::renderSceneInspector(const ImVec2& pos, const ImVec2& size)
     addComponentPanel(sceneSelection, sceneAddComponentOpen);
   }
 
+  ImGui::End();
+}
+
+void
+EngineGui::refreshSceneAssets()
+{
+  sceneAssets.clear();
+
+  const std::unordered_set<std::string> extensions = {
+    ".obj",  ".fbx", ".gltf", ".glb", ".dae", ".blend", ".stl",
+    ".ply",  ".3ds", ".x",    ".3mf", ".pmx", ".vrm",   ".lwo",
+    ".lws",  ".md5mesh", ".smd", ".ms3d", ".b3d", ".ase"
+  };
+
+  std::vector<std::filesystem::path> roots;
+  std::error_code ec;
+  for (const char* candidate : { "vox", "assets", "models" }) {
+    if (std::filesystem::is_directory(candidate, ec)) {
+      roots.emplace_back(candidate);
+    }
+  }
+  if (const char* extra = std::getenv("HACKMATRIX_ASSET_DIR")) {
+    if (*extra != '\0' && std::filesystem::is_directory(extra, ec)) {
+      roots.emplace_back(extra);
+    }
+  }
+
+  for (const auto& root : roots) {
+    std::filesystem::recursive_directory_iterator it(
+      root, std::filesystem::directory_options::skip_permission_denied, ec);
+    const std::filesystem::recursive_directory_iterator end;
+    for (; it != end && !ec; it.increment(ec)) {
+      if (!it->is_regular_file(ec)) {
+        continue;
+      }
+      std::string extension = sceneLower(it->path().extension().string());
+      if (!extensions.contains(extension)) {
+        continue;
+      }
+      sceneAssets.push_back(it->path().generic_string());
+    }
+  }
+
+  std::sort(sceneAssets.begin(), sceneAssets.end());
+  sceneAssets.erase(std::unique(sceneAssets.begin(), sceneAssets.end()),
+                    sceneAssets.end());
+  sceneAssetsScannedAt = nowSeconds();
+}
+
+void
+EngineGui::importSceneAsset(const std::string& path)
+{
+  if (path.empty()) {
+    return;
+  }
+  const entt::entity entity = registry->createPersistent();
+  glm::vec3 spawn(0.0f);
+  if (auto* camera = engine ? engine->getCamera() : nullptr) {
+    spawn = camera->position + camera->front * 3.0f;
+  }
+  registry->emplace<Positionable>(
+    entity, spawn, glm::vec3(0.0f), glm::vec3(0.0f), 1.0f);
+  registry->emplace<Model>(entity, path);
+  selectSceneEntity(entity, false);
+}
+
+void
+EngineGui::importSceneAssetAsParts(const std::string& path)
+{
+  Assimp::Importer importer;
+  const aiScene* scene = importer.ReadFile(
+    path,
+    aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenSmoothNormals |
+      aiProcess_JoinIdenticalVertices);
+  if (scene == nullptr || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) != 0 ||
+      scene->mRootNode == nullptr) {
+    spdlog::warn("Scene import failed for {}: {}",
+                 path,
+                 importer.GetErrorString());
+    importSceneAsset(path);
+    return;
+  }
+
+  const auto toGlm = [](const aiMatrix4x4& matrix) {
+    // Assimp stores matrices row-major; GLM is column-major.
+    return glm::mat4(matrix.a1,
+                     matrix.b1,
+                     matrix.c1,
+                     matrix.d1,
+                     matrix.a2,
+                     matrix.b2,
+                     matrix.c2,
+                     matrix.d2,
+                     matrix.a3,
+                     matrix.b3,
+                     matrix.c3,
+                     matrix.d3,
+                     matrix.a4,
+                     matrix.b4,
+                     matrix.c4,
+                     matrix.d4);
+  };
+
+  std::vector<entt::entity> created;
+  std::function<void(aiNode*, const glm::mat4&)> visit =
+    [&](aiNode* node, const glm::mat4& parentWorld) {
+      if (node == nullptr) {
+        return;
+      }
+      const glm::mat4 world =
+        parentWorld * toGlm(node->mTransformation);
+      const std::string nodeName = node->mName.C_Str();
+      if (node->mNumMeshes > 0 && !nodeName.empty()) {
+        glm::vec3 translation(0.0f);
+        glm::vec3 scale(1.0f);
+        glm::quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
+        glm::vec3 skew(0.0f);
+        glm::vec4 perspective(0.0f);
+        glm::decompose(
+          world, scale, rotation, translation, skew, perspective);
+
+        const entt::entity entity = registry->createPersistent();
+        const float uniformScale =
+          (std::abs(scale.x) + std::abs(scale.y) + std::abs(scale.z)) / 3.0f;
+        registry->emplace<Positionable>(
+          entity,
+          translation,
+          glm::vec3(0.0f),
+          glm::degrees(glm::eulerAngles(rotation)),
+          std::max(0.001f, uniformScale));
+        registry->emplace<Model>(entity, path, nodeName);
+        created.push_back(entity);
+      }
+      for (unsigned int i = 0; i < node->mNumChildren; ++i) {
+        visit(node->mChildren[i], world);
+      }
+    };
+  visit(scene->mRootNode, glm::mat4(1.0f));
+
+  if (created.empty()) {
+    importSceneAsset(path);
+    return;
+  }
+  sceneSelectionSet = created;
+  sceneSelection = created.back();
+  sceneAddComponentOpen = false;
+  sceneAddComponentEntity = entt::null;
+}
+
+void
+EngineGui::renderSceneAssetBrowser(const ImVec2& pos, const ImVec2& size)
+{
+  ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+  ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+  ImGui::Begin("Assets",
+               nullptr,
+               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_NoCollapse);
+
+  if (sceneAssetsScannedAt < 0.0) {
+    refreshSceneAssets();
+  }
+
+  if (ImGui::Button("Refresh")) {
+    refreshSceneAssets();
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("Import as parts", &sceneImportAsParts);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Create one entity per Assimp node (static transforms).");
+  }
+
+  ImGui::SetNextItemWidth(-1.0f);
+  ImGui::InputTextWithHint("##scene_asset_filter",
+                           "Search assets...",
+                           sceneAssetFilter,
+                           IM_ARRAYSIZE(sceneAssetFilter));
+
+  const std::string filter = sceneLower(sceneAssetFilter);
+  ImGui::Separator();
+  ImGui::BeginChild("##scene_asset_list", ImVec2(0.0f, 0.0f), false);
+  if (sceneAssets.empty()) {
+    ImGui::TextDisabled("No models found.");
+    ImGui::TextDisabled("Put OBJ/FBX/glTF files in vox/.");
+  }
+  for (std::size_t i = 0; i < sceneAssets.size(); ++i) {
+    const std::string& asset = sceneAssets[i];
+    const std::string label =
+      std::filesystem::path(asset).filename().string();
+    if (!filter.empty() && sceneLower(asset).find(filter) == std::string::npos) {
+      continue;
+    }
+    ImGui::PushID(static_cast<int>(i));
+    const std::string selectable = label + "##asset";
+    ImGui::Selectable(selectable.c_str(), false);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", asset.c_str());
+    }
+    const bool doubleClicked = ImGui::IsItemHovered() &&
+                               ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 42.0f);
+    ImGui::BeginDisabled(sceneStructureLocked());
+    const bool addClicked = ImGui::SmallButton("Add");
+    ImGui::EndDisabled();
+    if ((doubleClicked || addClicked) && !sceneStructureLocked()) {
+      if (sceneImportAsParts) {
+        importSceneAssetAsParts(asset);
+      } else {
+        importSceneAsset(asset);
+      }
+    }
+    ImGui::PopID();
+  }
+  ImGui::EndChild();
   ImGui::End();
 }
 
@@ -1116,27 +1818,71 @@ EngineGui::renderSceneGizmo(const ImVec2& clipMin, const ImVec2& clipMax)
   if (worldPerPixel <= 0.0f) {
     return;
   }
-  const float axisLength = worldPerPixel * 90.0f;
 
   ImDrawList* draw = ImGui::GetForegroundDrawList();
   draw->PushClipRect(clipMin, clipMax, true);
-  for (int axis = 0; axis < 3; ++axis) {
-    ImVec2 end;
-    if (!sceneProjectToScreen(
-          projection,
-          view,
-          positionable->pos + kGizmoAxes[axis] * axisLength,
-          end)) {
-      continue;
+
+  if (sceneGizmoMode == SceneGizmoMode::Rotate) {
+    const float radius = worldPerPixel * 70.0f;
+    constexpr int segments = 48;
+    for (int axis = 0; axis < 3; ++axis) {
+      const bool active = sceneGizmoDragAxis == axis ||
+                          (sceneGizmoDragAxis < 0 &&
+                           sceneGizmoHoverAxis == axis);
+      ImVec2 previous;
+      bool hasPrevious = false;
+      for (int i = 0; i <= segments; ++i) {
+        const float angle =
+          (2.0f * kGizmoPi * static_cast<float>(i)) / segments;
+        const glm::vec3 world =
+          positionable->pos +
+          (kGizmoCircleA[axis] * std::cos(angle) +
+           kGizmoCircleB[axis] * std::sin(angle)) *
+            radius;
+        ImVec2 point;
+        if (!sceneProjectToScreen(projection, view, world, point)) {
+          hasPrevious = false;
+          continue;
+        }
+        if (hasPrevious) {
+          draw->AddLine(previous,
+                        point,
+                        kGizmoColors[axis],
+                        active ? 3.0f : 1.5f);
+        }
+        previous = point;
+        hasPrevious = true;
+      }
     }
-    const bool active = sceneGizmoDragAxis == axis ||
-                        (sceneGizmoDragAxis < 0 && sceneGizmoHoverAxis == axis);
-    draw->AddLine(origin, end, kGizmoColors[axis], active ? 4.0f : 2.0f);
-    draw->AddCircleFilled(end, active ? 6.0f : 4.0f, kGizmoColors[axis]);
-    draw->AddText(ImVec2(end.x + 5.0f, end.y - 7.0f),
-                  kGizmoColors[axis],
-                  kGizmoNames[axis]);
+  } else {
+    const float axisLength = worldPerPixel * 90.0f;
+    for (int axis = 0; axis < 3; ++axis) {
+      ImVec2 axisEnd;
+      if (!sceneProjectToScreen(
+            projection,
+            view,
+            positionable->pos + kGizmoAxes[axis] * axisLength,
+            axisEnd)) {
+        continue;
+      }
+      const bool active = sceneGizmoDragAxis == axis ||
+                          (sceneGizmoDragAxis < 0 &&
+                           sceneGizmoHoverAxis == axis);
+      draw->AddLine(origin, axisEnd, kGizmoColors[axis], active ? 4.0f : 2.0f);
+      if (sceneGizmoMode == SceneGizmoMode::Scale) {
+        const float half = active ? 5.0f : 4.0f;
+        draw->AddRectFilled(ImVec2(axisEnd.x - half, axisEnd.y - half),
+                            ImVec2(axisEnd.x + half, axisEnd.y + half),
+                            kGizmoColors[axis]);
+      } else {
+        draw->AddCircleFilled(axisEnd, active ? 6.0f : 4.0f, kGizmoColors[axis]);
+      }
+      draw->AddText(ImVec2(axisEnd.x + 5.0f, axisEnd.y - 7.0f),
+                    kGizmoColors[axis],
+                    kGizmoNames[axis]);
+    }
   }
+
   draw->AddCircleFilled(origin, 4.0f, IM_COL32(245, 245, 245, 245));
   draw->PopClipRect();
 }
@@ -1179,33 +1925,67 @@ EngineGui::handleSceneGizmoInput(const ImVec2& mouse, bool mouseInView)
   if (worldPerPixel <= 0.0f) {
     return false;
   }
-  const float axisLength = worldPerPixel * 90.0f;
 
   int bestAxis = -1;
   float bestDistance = 9.0f;
   glm::vec2 bestScreenDirection(0.0f);
-  for (int axis = 0; axis < 3; ++axis) {
-    ImVec2 end;
-    if (!sceneProjectToScreen(
-          projection,
-          view,
-          positionable->pos + kGizmoAxes[axis] * axisLength,
-          end)) {
-      continue;
+
+  if (sceneGizmoMode == SceneGizmoMode::Rotate) {
+    const float radius = worldPerPixel * 70.0f;
+    constexpr int segments = 48;
+    for (int axis = 0; axis < 3; ++axis) {
+      ImVec2 previous;
+      bool hasPrevious = false;
+      for (int i = 0; i <= segments; ++i) {
+        const float angle =
+          (2.0f * kGizmoPi * static_cast<float>(i)) / segments;
+        const glm::vec3 world =
+          positionable->pos +
+          (kGizmoCircleA[axis] * std::cos(angle) +
+           kGizmoCircleB[axis] * std::sin(angle)) *
+            radius;
+        ImVec2 point;
+        if (!sceneProjectToScreen(projection, view, world, point)) {
+          hasPrevious = false;
+          continue;
+        }
+        if (hasPrevious) {
+          const float hitDistance =
+            sceneDistanceToSegment(mouse, previous, point);
+          if (hitDistance < bestDistance) {
+            bestDistance = hitDistance;
+            bestAxis = axis;
+          }
+        }
+        previous = point;
+        hasPrevious = true;
+      }
     }
-    const float dx = end.x - origin.x;
-    const float dy = end.y - origin.y;
-    const float screenLength = std::hypot(dx, dy);
-    // A nearly camera-facing axis has almost no screen length and cannot be
-    // dragged reliably; leave it out of hit testing.
-    if (screenLength < 8.0f) {
-      continue;
-    }
-    const float hitDistance = sceneDistanceToSegment(mouse, origin, end);
-    if (hitDistance < bestDistance) {
-      bestDistance = hitDistance;
-      bestAxis = axis;
-      bestScreenDirection = glm::vec2(dx / screenLength, dy / screenLength);
+  } else {
+    const float axisLength = worldPerPixel * 90.0f;
+    for (int axis = 0; axis < 3; ++axis) {
+      ImVec2 axisEnd;
+      if (!sceneProjectToScreen(
+            projection,
+            view,
+            positionable->pos + kGizmoAxes[axis] * axisLength,
+            axisEnd)) {
+        continue;
+      }
+      const float dx = axisEnd.x - origin.x;
+      const float dy = axisEnd.y - origin.y;
+      const float screenLength = std::hypot(dx, dy);
+      // A nearly camera-facing axis has almost no screen length and cannot be
+      // dragged reliably; leave it out of hit testing.
+      if (screenLength < 8.0f) {
+        continue;
+      }
+      const float hitDistance = sceneDistanceToSegment(mouse, origin, axisEnd);
+      if (hitDistance < bestDistance) {
+        bestDistance = hitDistance;
+        bestAxis = axis;
+        bestScreenDirection = glm::vec2(dx / screenLength, dy / screenLength);
+      }
     }
   }
 
@@ -1222,9 +2002,62 @@ EngineGui::handleSceneGizmoInput(const ImVec2& mouse, bool mouseInView)
   sceneGizmoDragAxis = bestAxis;
   sceneGizmoEntity = sceneSelection;
   sceneGizmoStartMouse = mouse;
-  sceneGizmoStartPos = positionable->pos;
+  sceneGizmoStartOrigin = origin;
+  sceneGizmoStartAngle =
+    std::atan2(mouse.y - origin.y, mouse.x - origin.x);
+  sceneGizmoStartRadiusPixels =
+    std::max(12.0f, std::hypot(mouse.x - origin.x, mouse.y - origin.y));
   sceneGizmoAxisScreen = bestScreenDirection;
   sceneGizmoWorldPerPixel = worldPerPixel;
+
+  sceneGizmoTargets.clear();
+  sceneGizmoStartPositions.clear();
+  sceneGizmoStartRotations.clear();
+  sceneGizmoStartScales.clear();
+
+  std::unordered_set<int64_t> targetIds;
+  const auto addTarget = [&](entt::entity candidate) {
+    if (candidate == entt::null || !registry->valid(candidate) ||
+        !registry->any_of<Positionable, Persistable>(candidate)) {
+      return;
+    }
+    targetIds.insert(registry->get<Persistable>(candidate).entityId);
+  };
+  if (sceneSelectionSet.empty()) {
+    addTarget(sceneSelection);
+  }
+  for (const entt::entity selected : sceneSelectionSet) {
+    addTarget(selected);
+  }
+  if (sceneGizmoMode == SceneGizmoMode::Translate) {
+    for (const entt::entity selected : sceneSelectionSet) {
+      sceneCollectDescendantIds(registry, selected, targetIds);
+    }
+    if (sceneSelectionSet.empty()) {
+      sceneCollectDescendantIds(registry, sceneSelection, targetIds);
+    }
+  }
+
+  for (const int64_t id : targetIds) {
+    auto entity = registry->locateEntity(static_cast<int>(id));
+    if (!entity.has_value()) {
+      continue;
+    }
+    auto* target = registry->try_get<Positionable>(entity.value());
+    if (!target) {
+      continue;
+    }
+    sceneGizmoTargets.push_back(entity.value());
+    sceneGizmoStartPositions[entity.value()] = target->pos;
+    sceneGizmoStartRotations[entity.value()] = target->rotate;
+    sceneGizmoStartScales[entity.value()] = target->scale;
+  }
+
+  if (sceneGizmoTargets.empty()) {
+    sceneGizmoDragAxis = -1;
+    sceneGizmoEntity = entt::null;
+    return false;
+  }
   return true;
 }
 
@@ -1244,25 +2077,131 @@ EngineGui::updateSceneGizmoDrag(const ImVec2& mouse)
     return;
   }
 
-  const float dx = mouse.x - sceneGizmoStartMouse.x;
-  const float dy = mouse.y - sceneGizmoStartMouse.y;
-  const float pixelsAlongAxis =
-    dx * sceneGizmoAxisScreen.x + dy * sceneGizmoAxisScreen.y;
-  const float worldDelta = pixelsAlongAxis * sceneGizmoWorldPerPixel;
-  positionable->pos =
-    sceneGizmoStartPos + kGizmoAxes[sceneGizmoDragAxis] * worldDelta;
-  positionable->damage();
+  if (sceneGizmoMode == SceneGizmoMode::Translate) {
+    const float dx = mouse.x - sceneGizmoStartMouse.x;
+    const float dy = mouse.y - sceneGizmoStartMouse.y;
+    const float pixelsAlongAxis =
+      dx * sceneGizmoAxisScreen.x + dy * sceneGizmoAxisScreen.y;
+    const float worldDelta = pixelsAlongAxis * sceneGizmoWorldPerPixel;
+    const glm::vec3 offset =
+      kGizmoAxes[sceneGizmoDragAxis] * worldDelta;
+    for (const entt::entity target : sceneGizmoTargets) {
+      auto* targetPositionable = registry->try_get<Positionable>(target);
+      const auto start = sceneGizmoStartPositions.find(target);
+      if (!targetPositionable || start == sceneGizmoStartPositions.end()) {
+        continue;
+      }
+      targetPositionable->pos = start->second + offset;
+      targetPositionable->damage();
+    }
+  } else if (sceneGizmoMode == SceneGizmoMode::Rotate) {
+    const float angle =
+      std::atan2(mouse.y - sceneGizmoStartOrigin.y,
+                 mouse.x - sceneGizmoStartOrigin.x);
+    float delta = angle - sceneGizmoStartAngle;
+    while (delta > kGizmoPi) {
+      delta -= 2.0f * kGizmoPi;
+    }
+    while (delta < -kGizmoPi) {
+      delta += 2.0f * kGizmoPi;
+    }
+    const float degrees = glm::degrees(delta);
+    for (const entt::entity target : sceneGizmoTargets) {
+      auto* targetPositionable = registry->try_get<Positionable>(target);
+      const auto start = sceneGizmoStartRotations.find(target);
+      if (!targetPositionable || start == sceneGizmoStartRotations.end()) {
+        continue;
+      }
+      targetPositionable->rotate[sceneGizmoDragAxis] =
+        start->second[sceneGizmoDragAxis] + degrees;
+      targetPositionable->damage();
+    }
+  } else {
+    const float radius =
+      std::hypot(mouse.x - sceneGizmoStartOrigin.x,
+                 mouse.y - sceneGizmoStartOrigin.y);
+    const float factor = radius / sceneGizmoStartRadiusPixels;
+    for (const entt::entity target : sceneGizmoTargets) {
+      auto* targetPositionable = registry->try_get<Positionable>(target);
+      const auto start = sceneGizmoStartScales.find(target);
+      if (!targetPositionable || start == sceneGizmoStartScales.end()) {
+        continue;
+      }
+      targetPositionable->scale =
+        std::clamp(start->second * factor, 0.01f, 1000.0f);
+      targetPositionable->damage();
+    }
+  }
 }
 
 void
 EngineGui::endSceneGizmoDrag()
 {
-  const entt::entity edited = sceneGizmoEntity;
+  const std::vector<entt::entity> edited = sceneGizmoTargets;
+  std::vector<SceneTransformState> before;
+  std::vector<SceneTransformState> after;
+  bool changed = false;
+  before.reserve(edited.size());
+  after.reserve(edited.size());
+  for (const entt::entity entity : edited) {
+    auto* positionable = registry->try_get<Positionable>(entity);
+    const auto startPosition = sceneGizmoStartPositions.find(entity);
+    const auto startRotation = sceneGizmoStartRotations.find(entity);
+    const auto startScale = sceneGizmoStartScales.find(entity);
+    if (!positionable || startPosition == sceneGizmoStartPositions.end() ||
+        startRotation == sceneGizmoStartRotations.end() ||
+        startScale == sceneGizmoStartScales.end()) {
+      continue;
+    }
+    before.push_back(SceneTransformState{ entity,
+                                          startPosition->second,
+                                          startRotation->second,
+                                          startScale->second });
+    after.push_back(SceneTransformState{
+      entity, positionable->pos, positionable->rotate, positionable->scale });
+    if (positionable->pos != startPosition->second ||
+        positionable->rotate != startRotation->second ||
+        positionable->scale != startScale->second) {
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    const char* label = sceneGizmoMode == SceneGizmoMode::Rotate
+                          ? "Rotate"
+                          : (sceneGizmoMode == SceneGizmoMode::Scale ? "Scale"
+                                                                      : "Move");
+    pushSceneCommand(
+      SceneCommand{ label,
+                    [this, before]() {
+                      sceneApplyTransformStates(registry, before);
+                      for (const auto& state : before) {
+                        if (registry->valid(state.entity)) {
+                          commitSceneTransform(state.entity);
+                        }
+                      }
+                    },
+                    [this, after]() {
+                      sceneApplyTransformStates(registry, after);
+                      for (const auto& state : after) {
+                        if (registry->valid(state.entity)) {
+                          commitSceneTransform(state.entity);
+                        }
+                      }
+                    } });
+  }
+
   sceneGizmoDragAxis = -1;
   sceneGizmoEntity = entt::null;
   sceneGizmoHoverAxis = -1;
-  if (edited != entt::null && registry->valid(edited)) {
-    commitSceneTransform(edited);
+  sceneGizmoTargets.clear();
+  sceneGizmoStartPositions.clear();
+  sceneGizmoStartRotations.clear();
+  sceneGizmoStartScales.clear();
+  for (const entt::entity entity : edited) {
+    if (entity != entt::null && registry->valid(entity)) {
+      commitSceneTransform(entity);
+    }
   }
 }
 
@@ -1362,11 +2301,7 @@ EngineGui::renderSceneEditor()
     return;
   }
 
-  if (sceneSelection != entt::null &&
-      (!registry->valid(sceneSelection) ||
-       !registry->any_of<Persistable>(sceneSelection))) {
-    sceneSelection = entt::null;
-  }
+  pruneSceneSelection();
 
   // Keys are disabled while the editor is open (Engine::disableKeysIfImguiActive),
   // so this Escape is consumed here instead of opening the quit dialog.
@@ -1377,6 +2312,27 @@ EngineGui::renderSceneEditor()
       ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
     setSceneEditorOpen(false);
     return;
+  }
+
+  if (sceneGizmoDragAxis < 0 && !ImGui::IsAnyItemActive()) {
+    if (ImGui::IsKeyPressed(ImGuiKey_W, false)) {
+      sceneGizmoMode = SceneGizmoMode::Translate;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
+      sceneGizmoMode = SceneGizmoMode::Rotate;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+      sceneGizmoMode = SceneGizmoMode::Scale;
+    }
+  }
+  if (!ImGui::IsAnyItemActive() && ImGui::GetIO().KeyCtrl) {
+    if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+      if (ImGui::GetIO().KeyShift) {
+        redoSceneEdit();
+      } else {
+        undoSceneEdit();
+      }
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
+      redoSceneEdit();
+    }
   }
 
   ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -1391,8 +2347,13 @@ EngineGui::renderSceneEditor()
 
   renderSceneToolbar(ImVec2(origin.x, origin.y),
                      ImVec2(work.x, toolbarHeight));
+  const float outlinerHeight = std::max(150.0f, sideHeight * 0.64f);
+  const float assetsHeight =
+    std::max(110.0f, sideHeight - outlinerHeight - gap);
   renderSceneOutliner(ImVec2(origin.x + 30.0f, sideTop),
-                      ImVec2(leftWidth, sideHeight));
+                      ImVec2(leftWidth, outlinerHeight));
+  renderSceneAssetBrowser(ImVec2(origin.x + 30.0f, sideTop + outlinerHeight + gap),
+                          ImVec2(leftWidth, assetsHeight));
   renderSceneInspector(
     ImVec2(origin.x + work.x - rightWidth - gap, sideTop),
     ImVec2(rightWidth, sideHeight));
@@ -1414,10 +2375,8 @@ EngineGui::renderSceneEditor()
     !popupOpen && handleSceneGizmoInput(mouse, mouseInView);
   if (!gizmoCaptured && !popupOpen &&
       ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouseInView) {
-    sceneSelection = pickSceneEntity(mouse.x, mouse.y);
-    sceneGizmoHoverAxis = -1;
-    sceneAddComponentOpen = false;
-    sceneAddComponentEntity = entt::null;
+    selectSceneEntity(pickSceneEntity(mouse.x, mouse.y),
+                      ImGui::GetIO().KeyCtrl);
   }
 
   drawSceneSelectionOverlay(ImVec2(viewLeft, sideTop),

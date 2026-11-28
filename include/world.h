@@ -41,6 +41,7 @@ class World : public WorldInterface
   int damageIndex = -1;
   mutex preloadMutex;
   bool isDamaged = false;
+  bool simulationPaused_ = false;
   glm::vec3 cameraToVoxelSpace(glm::vec3 cameraPosition);
   shared_ptr<Cube> getCube(float x, float y, float z);
   const vector<shared_ptr<Cube>> getCubes();
@@ -77,6 +78,8 @@ class World : public WorldInterface
 
 public:
   void tick() override;
+  void setSimulationPaused(bool paused) { simulationPaused_ = paused; }
+  bool isSimulationPaused() const { return simulationPaused_; }
   const float CUBE_SIZE = 0.1;
   World(shared_ptr<EntityRegistry>,
         Camera* camera,

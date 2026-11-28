@@ -22,7 +22,7 @@ namespace MultiPlayer {
 namespace {
 
 constexpr std::string_view kFingerprintDomain =
-  "hackmatrix-scene-fingerprint-v5";
+  "hackmatrix-scene-fingerprint-v6";
 
 // Two independent 64-bit streaming hashes are enough to detect accidental
 // scene divergence (a single changed byte flips both). This is deliberately
@@ -314,16 +314,24 @@ hashModelRows(Hasher& hasher,
   hasher.updateString("Model");
   hasher.updateString("entity_id");
   hasher.updateString("path");
+  hasher.updateString("node");
 
+  const std::vector<std::string> columns = tableColumns(database, "Model");
+  const bool hasNode = std::find(columns.begin(), columns.end(), "node") !=
+                       columns.end();
   SQLite::Statement query(
-    database, "SELECT entity_id, path FROM Model ORDER BY entity_id");
+    database,
+    hasNode ? "SELECT entity_id, path, node FROM Model ORDER BY entity_id"
+            : "SELECT entity_id, path FROM Model ORDER BY entity_id");
   while (query.executeStep()) {
     const int64_t entityId = query.getColumn(0).getInt64();
     const std::string path = query.getColumn(1).getString();
+    const std::string node = hasNode ? query.getColumn(2).getString() : "";
     hasher.updateString("model-row");
     hasher.updateString(std::to_string(entityId));
     const std::string normalized = normalizeAssetPath(path, projectRoot);
     hasher.updateString(normalized);
+    hasher.updateString(node);
     if (path.empty()) {
       hasher.updateString("empty-model-path");
       continue;

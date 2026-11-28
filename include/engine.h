@@ -102,6 +102,7 @@ public:
   }
   Camera* getCamera() { return camera.get(); }
   Renderer* getRenderer() { return renderer.get(); }
+  World* getWorld() { return world.get(); }
   Api* getApi() { return api.get(); }
   WindowManager::WindowManagerPtr getWindowManager() { return wm; }
   Controls* getControls() { return controls.get(); }

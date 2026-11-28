@@ -57,7 +57,7 @@ Mesh::setupMesh()
 }
 
 void
-Mesh::Draw(Shader& shader)
+Mesh::Draw(Shader& shader) const
 {
 
   unsigned int diffuseNr = 1;
